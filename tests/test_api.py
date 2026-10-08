@@ -10,6 +10,16 @@ from fastapi.testclient import TestClient
 
 import api.app as A
 
+# Tests are an explicit test environment: opt into simulated funding.
+# Production defaults HV_ALLOW_SIMULATED=0 and refuses simulated contracts.
+A.ALLOW_SIMULATED = True
+# Isolate side effects: ledger + audio must not touch production paths.
+import tempfile as _tf
+_tmp = _tf.mkdtemp(prefix="hv-test-")
+import hv.ledger as _led
+A.led = _led.EventLedger(_tmp + "/ev.db")
+import hv.upload as _upl
+_upl.RAW_DIR = _tmp + "/audio"
 A.AGENTS["k1"] = {"agent_id": "agent_005", "principal_id": "org_832",
                   "max_job_minor": 300000, "max_daily_minor": 10**9}
 A.SESS = __import__("hv.sessions", fromlist=["SessionStore"]).SessionStore("/tmp/hv-t-sess.db")
@@ -101,7 +111,8 @@ def test_profile_draft_publish_and_guest_order():
                      "display_name": "Alex", "languages": ["en"]}, headers=NH)
     assert d.status_code == 200 and "nationality" not in str(d.json())
     p = c.post("/v1/narrators/me/profile",
-               json={"publish": True, "profile": {"display_name": "Alex", "nationality": "x"}},
+               json={"publish": True, "handle": "alex_test",
+                     "profile": {"display_name": "Alex", "nationality": "x"}},
                headers=NH)
     assert p.json()["published"].get("nationality") is None
     r = c.post("/v1/contracts", json={"script_text": "hello world " * 40, "narrator_ids": ["nar_041"]}, headers=H)

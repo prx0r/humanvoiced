@@ -14,7 +14,7 @@ from hv.util import sha256, uid
 
 @dataclass
 class PaymentIntent:
-    intent_id: str = field(default_factory=lambda: "pi_" + uid()[:8])
+    intent_id: str = field(default_factory=lambda: "pi_" + uid())
     contract_id: str = ""
     rail: str = "simulated"
     asset: str = "USD"

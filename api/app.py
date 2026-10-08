@@ -37,7 +37,9 @@ from hv.util import utcnow as utcnow_now
 
 POLICY_VERSION = "0.1"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-ALLOW_SIMULATED = os.getenv("HV_ALLOW_SIMULATED", "1") == "1"
+# Simulated funding is NEVER production. Default off; set HV_ALLOW_SIMULATED=1
+# explicitly only in dev/test. Production refuses simulated funding outright.
+ALLOW_SIMULATED = os.getenv("HV_ALLOW_SIMULATED", "0") == "1"
 
 app = FastAPI(title="HumanVoiced", version="0.1")
 
@@ -80,9 +82,16 @@ def _store():
 
 
 def _agent(key: str | None) -> dict:
-    if not key or key not in AGENTS:
+    if not key:
         raise HTTPException(401, "unknown agent key")
-    return AGENTS[key]
+    if key in AGENTS:
+        return AGENTS[key]
+    # Durable fallback: hashed keys survive restarts (raw keys never stored).
+    doc = DB.get_agent(sha256(key))
+    if not doc:
+        raise HTTPException(401, "unknown agent key")
+    AGENTS[key] = doc
+    return doc
 
 
 def _narrator(x_hv_session: str | None) -> str:
@@ -107,6 +116,31 @@ def _party_only(cid: str, nid: str | None, agent_id: str | None):
     raise HTTPException(403, "not a party to this contract")
 
 
+def _get_rep(nid: str) -> R.ReputationVector:
+    """Reputation hydrated from the narrator doc (durable, survives restarts)."""
+    doc = DB.get_narrator(nid) or {}
+    saved = doc.get("reputation") or {}
+    r = R.ReputationVector(nid)
+    r.completed = int(saved.get("completed", 0))
+    vec = saved.get("vector") or {}
+    for d in R.DIMENSIONS:
+        r.vector[d] = vec.get(d)
+    r.verified_incidents = int(saved.get("verified_incidents", 0))
+    r.appeals_won = int(saved.get("appeals_won", 0))
+    reps[nid] = r
+    return r
+
+
+def _save_rep(nid: str, r: R.ReputationVector):
+    doc = DB.get_narrator(nid) or {"id": nid}
+    doc["reputation"] = {"completed": r.completed, "vector": dict(r.vector),
+                         "verified_incidents": r.verified_incidents,
+                         "appeals_won": r.appeals_won,
+                         "model_version": r.model_version}
+    DB.save_narrator(doc)
+    reps[nid] = r
+
+
 def _price_for(script_text: str, tier: str = "standard") -> dict:
     minutes = max(0.25, len(script_text.split()) / 150.0)
     return {"minutes": round(minutes, 2), **P.quote(minutes, tier=tier)}
@@ -119,14 +153,22 @@ def google_start():
     if not hv_auth.configured():
         raise HTTPException(501, "sign-in not configured yet")
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(hv_auth.authorize_url(SESS.issue_state()), status_code=302)
+    state = SESS.issue_state()
+    resp = RedirectResponse(hv_auth.authorize_url(state), status_code=302)
+    # Bind the OAuth state to the initiating browser: callback must present
+    # the same state both as query param and as cookie (CSRF protection).
+    resp.set_cookie("hv_oauth", state, httponly=True, secure=True,
+                    samesite="lax", max_age=600, path="/api/auth/google/callback")
+    return resp
 
 
 @app.get("/api/auth/google/callback")
-def google_callback(code: str = "", state: str = ""):
+def google_callback(request: Request, code: str = "", state: str = ""):
     from fastapi.responses import RedirectResponse
     if not code:
         raise HTTPException(400, "missing code")
+    if not state or request.cookies.get("hv_oauth", "") != state:
+        raise HTTPException(400, "state not initiated by this browser")
     if not SESS.consume_state(state):
         raise HTTPException(400, "bad or expired state")
     try:
@@ -139,10 +181,11 @@ def google_callback(code: str = "", state: str = ""):
                           "handle": "", "languages": [], "prefs": {},
                           "samples": [], "created": utcnow_now()})
     token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
-    resp = RedirectResponse("https://humanvoiced.com/onboard.html?login=ok", status_code=302)
+    resp = RedirectResponse("https://humanvoiced.com/onboard?login=ok", status_code=302)
     resp.set_cookie("hv_session", token, httponly=True, secure=True,
                     samesite="lax", max_age=30 * 86400, path="/",
                     domain=".humanvoiced.com")
+    resp.delete_cookie("hv_oauth", path="/api/auth/google/callback")
     return resp
 
 
@@ -152,8 +195,23 @@ def logout(x_hv_session: str | None = Header(None)):
         SESS.revoke(x_hv_session)
     from fastapi.responses import JSONResponse
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie("hv_session", path="/")
+    resp.delete_cookie("hv_session", path="/", domain=".humanvoiced.com")
+    resp.delete_cookie("hv_session", path="/")  # legacy scope, if any
     return resp
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request, x_hv_session: str | None = Header(None)):
+    """Durable signed-in status for page reloads (cookie or header session)."""
+    tok = x_hv_session or request.cookies.get("hv_session", "")
+    nid = SESS.narrator_for(tok)
+    if not nid:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"authenticated": False}, status_code=401)
+    doc = DB.get_narrator(nid) or {}
+    return {"authenticated": True, "narrator_id": nid,
+            "name": (doc.get("profile_published") or {}).get("display_name", ""),
+            "email": doc.get("email", "")}
 
 
 # ---------- narrators / voices ----------
@@ -221,16 +279,44 @@ def my_profile_get(x_hv_session: str | None = Header(None)):
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import profile_draft as _pd
+    import re as _re
     nid = _narrator(x_hv_session)
     doc = DB.get_narrator(nid) or {"id": nid}
     if body.get("publish"):
-        pub = _pd.publish(doc, body.get("profile", {}))
-        consent = set(body.get("consent_samples", []))
+        profile = dict(body.get("profile", {}))
+        handle = (body.get("handle") or profile.get("handle") or doc.get("handle") or "").strip().lstrip("@")
+        if not _re.fullmatch(r"[A-Za-z0-9_.-]{2,30}", handle or ""):
+            raise HTTPException(422, "handle must be 2-30 chars: letters, numbers, _.-")
+        for other in DB.list_narrators():
+            if other.get("id") != nid and (other.get("handle", "") or "").lower() == handle.lower():
+                raise HTTPException(409, "handle taken")
+        doc["handle"] = handle
+        # studio.js sends display names (e.g. "English") in the publish
+        # profile but 2-letter codes in the pre-publish update. Only keep
+        # code-shaped values so language filtering keeps working.
+        if profile.get("languages") and all(
+                isinstance(v, str) and _re.fullmatch(r"[A-Za-z]{2,3}", v.strip())
+                for v in profile["languages"]):
+            doc["languages"] = [v.strip().lower() for v in profile["languages"]]
+        if profile.get("categories"):
+            doc.setdefault("prefs", {})["categories"] = list(profile["categories"])
+        profile["handle"] = handle
+        pub = _pd.publish(doc, profile)
+        raw_consent = body.get("consent_samples", [])
+        if raw_consent == "latest":
+            raw_consent = ["latest"]
+        consent = set(raw_consent or [])
+        if "latest" in consent:
+            latest = (doc.get("samples", []) or [None])[-1]
+            latest_sha = latest.get("sha256") if isinstance(latest, dict) else None
+            consent.discard("latest")
+            if latest_sha:
+                consent.add(latest_sha)
         for s in doc.get("samples", []):
             if isinstance(s, dict):
                 s["consented_public"] = s.get("sha256") in consent
         DB.save_narrator(doc)
-        _ev(nid, "profile.published", {"handle": pub.get("display_name", "")}, nid, "narrator")
+        _ev(nid, "profile.published", {"handle": handle}, nid, "narrator")
         return {"published": pub}
     if body.get("draft_from_tech") or body.get("draft_from_sample"):
         latest = (doc.get("samples", []) or [{}])[-1]
@@ -255,17 +341,13 @@ def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
 
 
 def _analyze_sample(body: bytes, tx: dict) -> dict:
-    """Real analysis on stored bytes: VAD + acoustic + transcript merge."""
+    """Real analysis on stored bytes: VAD + acoustic + transcript merge.
+    Decodes complete 16-bit PCM frames and downmixes channels by averaging
+    (see hv.audio.decode_wav_mono). Silent/empty audio never throws."""
     from hv import audio as _au
-    import io as _io
-    import struct as _st
-    import wave as _wv
     try:
-        with _wv.open(_io.BytesIO(body), "rb") as _w:
-            _n, _ch, _sr = _w.getnframes(), _w.getnchannels(), _w.getframerate()
-            _raw = _w.readframes(_n)
-            _frames = [x[0] / 32768 for x in _st.iter_unpack("<h", _raw[::_ch * 2] or b"\x00\x00")]
-        return _au.analyze(_frames[:_sr * 120], _sr, tx.get("text", ""), "")
+        frames, sr = _au.decode_wav_mono(body, max_seconds=120)
+        return _au.analyze(frames, sr, tx.get("text", ""), "")
     except Exception as e:
         return {"error": str(e)[:100]}
 
@@ -307,11 +389,14 @@ async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
 def voices(style: str = "", language: str = ""):
     out = []
     for n in DB.list_narrators():
+        if not n.get("profile_published"):
+            continue  # unpublished profiles never appear in the public catalog
         if language and language not in n.get("languages", []):
             continue
         out.append({"id": n["id"], "handle": n.get("handle", ""),
                     "languages": n.get("languages", []),
-                    "samples": len(n.get("samples", []))})
+                    "samples": len([s for s in n.get("samples", [])
+                                    if isinstance(s, dict) and s.get("consented_public")])})
     return {"voices": out}
 
 
@@ -376,6 +461,8 @@ def voices_search(body: dict[str, Any]):
     prefs = body.get("preferences", {})
     catalog = []
     for n in DB.list_narrators():
+        if not n.get("profile_published"):
+            continue
         feats = dict(n.get("match_features", {}))
         if prefs.get("prosody") and prefs["prosody"] in str(feats.get("prosody", "")):
             feats["perceptual"] = min(1.0, feats.get("perceptual", 0.5) + 0.2)
@@ -405,7 +492,7 @@ def voice_sample(nid: str, sha: str = ""):
     if not target:
         raise HTTPException(404, "no public samples")
     from pathlib import Path as _P
-    f = _P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), target + ".wav")
+    f = _P(UPL.RAW_DIR, target + ".wav")
     if not f.exists():
         raise HTTPException(404, "audio missing")
     return Response(f.read_bytes(), media_type="audio/wav")
@@ -491,7 +578,8 @@ def casting_decide(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = 
 
 @app.post("/v1/agents/provision")
 def provision_agent(body: dict[str, Any]):
-    """Bootstrap agent keys. Gated by HV_ADMIN_TOKEN env (never default)."""
+    """Bootstrap agent keys. Gated by HV_ADMIN_TOKEN env (never default).
+    Only the key hash is stored; the raw key is shown once at provision."""
     import secrets as _s
     admin = os.getenv("HV_ADMIN_TOKEN", "")
     if not admin or body.get("admin_token") != admin:
@@ -501,6 +589,7 @@ def provision_agent(body: dict[str, Any]):
                    "principal_id": body.get("principal_id", ""),
                    "max_job_minor": int(body.get("max_job_minor", 3000)),
                    "max_daily_minor": int(body.get("max_daily_minor", 100000))}
+    DB.save_agent(sha256(key), AGENTS[key])
     return {"agent_key": key, "agent_id": AGENTS[key]["agent_id"]}
 
 
@@ -517,7 +606,7 @@ def portfolio(nid: str):
     n = DB.get_narrator(nid)
     if not n:
         raise HTTPException(404, "unknown narrator")
-    r = reps.get(nid, R.ReputationVector(nid))
+    r = _get_rep(nid)
     pub = (n.get("profile_published") or {})
     pub_samples = []
     for s in n.get("samples", []):
@@ -538,7 +627,7 @@ def portfolio(nid: str):
 
 @app.get("/v1/voices/{nid}/reputation")
 def reputation(nid: str):
-    return reps.get(nid, R.ReputationVector(nid)).to_dict()
+    return _get_rep(nid).to_dict()
 
 
 # ---------- contracts ----------
@@ -578,20 +667,33 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
             raise HTTPException(402, why)
     c, priced = _quote_for(brief, ag)
     today = _dt.date.today().isoformat()
-    if DB.day_spend(ag["agent_id"], today) + priced["narrator_payout"] * 100 > ag.get("max_daily_minor", 10**12):
+    if not DB.reserve_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100),
+                            ag.get("max_daily_minor", 10**12)):
         raise HTTPException(402, "exceeds agent daily budget")
-    DB.add_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100))
     script = brief.get("script_text", "")
     DB.save_script(script)
+    from hv import brief as _br
+    try:
+        manifest = _br.compile(brief.get("brief") or {"mode": "script"}, script)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     if not ALLOW_SIMULATED:
-        raise HTTPException(501, "simulated rail disabled — configure a real rail")
+        raise HTTPException(501, "simulated funding disabled — set HV_ALLOW_SIMULATED=1 only in dev/test; "
+                                 "production requires a real protected-funding rail")
     intent = E.PaymentIntent(contract_id=c.contract_id, amount_minor=int(priced["narrator_payout"] * 100))
     if not rail.verify_funding(intent):
         raise HTTPException(402, "funding verification failed")
     rail.lock(intent)
     c.funding_status = "secured"
     c.status = "offered"
-    DB.save_contract(c.to_dict())
+    doc = c.to_dict()
+    doc["segment_manifest"] = manifest
+    doc["segments_state"] = {s["id"]: {"takes": [], "accepted": None,
+                                       "needs_retake": False, "retake_note": ""}
+                             for s in manifest["segments"]}
+    doc["session"] = {"takes": 0, "retakes": 0, "assemblies": 0,
+                      "label": "HumanVoiced Verified Recording Session"}
+    DB.save_contract(doc)
     DB.save_intent(c.contract_id, {"intent_id": intent.intent_id,
                                   "amount_minor": intent.amount_minor,
                                   "idempotency_key": intent.idempotency_key})
@@ -611,20 +713,23 @@ def accept_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Head
         raise HTTPException(404, "unknown contract")
     if not DB.is_offered(cid, nid):
         raise HTTPException(403, "offer was not dispatched to you")
-    c = DB.accept_atomic(cid, nid)
-    if not c:
+    if cur.get("status") not in ("offered", "proposed"):
         raise HTTPException(409, "offer unavailable (taken or wrong state)")
-    obj = C.HVContract(**{k: c[k] for k in C.HVContract().__dict__ if k in c})
-    try:
-        C.accept(obj, nid, funded=(c["funding_status"] == "secured"))
-    except ValueError as e:
-        raise HTTPException(409, str(e))
+    # Eligibility BEFORE the claim transaction (rechecked post-claim on the doc).
     ndoc = DB.get_narrator(nid) or {}
     ok, why = _gx.bookable_in((ndoc.get("country") or ""))
     if ndoc.get("country") and not ok:
         raise HTTPException(402, why)
-    c.update(obj.to_dict())
-    DB.save_contract(c)
+    # Validate funding/state on a copy BEFORE claiming, so a validation
+    # failure never strands a committed claim.
+    obj = C.HVContract(**{k: cur[k] for k in C.HVContract().__dict__ if k in cur})
+    try:
+        C.accept(obj, nid, funded=(cur.get("funding_status") == "secured"))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    c = DB.accept_atomic(cid, nid, obj.to_dict())
+    if not c:
+        raise HTTPException(409, "offer unavailable (taken or wrong state)")
     _ev(cid, "offer.accepted", {"narrator": nid}, nid, "narrator")
     _ev(cid, "contract.activated", {"deadline": c["deadline_at"]})
     return {"contract": c}
@@ -635,6 +740,7 @@ def decline_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Hea
     nid = _narrator(x_hv_session)
     if not DB.get_contract(cid):
         raise HTTPException(404, "unknown contract")
+    DB.decline_offer(cid, nid)
     _ev(cid, "offer.declined", {"by": nid}, nid, "narrator")
     return {"ok": True, "penalty": "none"}
 
@@ -659,6 +765,24 @@ def contract_events(cid: str, x_hv_session: str | None = Header(None),
     _party_only(cid, nid, aid)
     ok, msg = led.verify_chain(cid)
     return {"verified": ok, "chain": msg, "events": led.get_events(cid)}
+
+
+@app.get("/v1/contracts/{cid}/script")
+def contract_script(cid: str, x_hv_session: str | None = Header(None),
+                    x_hv_agent_key: str | None = Header(None)):
+    """Frozen script text for the assigned reader. Party-only; hash must match.
+    Offered narrators may read it to review the job before accepting."""
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    try:
+        c = _party_only(cid, nid, aid)
+    except Exception:
+        c = None
+        if nid and DB.is_offered(cid, nid):
+            c = DB.get_contract(cid)
+        if c is None:
+            raise
+    text = DB.get_script(c.get("script_sha256", "")) or ""
+    return {"script_sha256": c.get("script_sha256"), "script_text": text}
 
 
 @app.post("/v1/contracts/{cid}/submissions")
@@ -690,7 +814,7 @@ async def submit(cid: str, request: Request, x_hv_session: str | None = Header(N
         owner = DB.upload_owner(claimed, cid) if claimed else None
         if not claimed or owner != nid:
             raise HTTPException(422, "unknown upload hash — upload your bytes first")
-        if not _P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), claimed + ".wav").exists():
+        if not _P(UPL.RAW_DIR, claimed + ".wav").exists():
             raise HTTPException(422, "upload bytes missing server-side")
         receipt = {"sha256": claimed, "r2_key": f"audio/raw/{claimed}.wav",
                    "received_at": utcnow_now(), "contract_id": cid, "deduplicated": True}
@@ -701,13 +825,15 @@ async def submit(cid: str, request: Request, x_hv_session: str | None = Header(N
     DB.save_contract(c)
     _ev(cid, "submission.received", sub, nid, "narrator")
     from hv import qc as _qc
-    fpath = str(_P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), receipt["sha256"] + ".wav"))
+    fpath = str(_P(UPL.RAW_DIR, receipt["sha256"] + ".wav"))
     try:
         tech = _qc.tech_checks(fpath)
     except Exception as e:
         tech = {"file_valid": False, "error": str(e)[:100]}
     _ev(cid, "qc.completed", {"submission": sub["submission_id"], "technical": tech})
     sub["qc_technical"] = tech
+    c["last_submission"] = sub  # persisted for approve/receipt (was response-only)
+    DB.save_contract(c)
     return sub
 
 
@@ -727,6 +853,80 @@ def request_correction(cid: str, body: dict[str, Any], x_hv_agent_key: str | Non
     DB.save_contract(c)
     _ev(cid, "correction.requested", {"passages": body.get("passages", [])}, ag["agent_id"], "agent")
     return {"ok": True, "status": "in_correction"}
+
+
+@app.post("/v1/contracts/{cid}/approve")
+def approve(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Close the loop: agent approves → escrow releases → reputation recorded.
+    Idempotent: re-approving a settled contract returns its receipt.
+    Correctable defects 409 (use corrections); contested contracts 409 (resolve dispute)."""
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "only the contracting agent approves")
+    if c.get("status") == "settled":
+        return {"contract": c, "settlement": c.get("settlement"), "deduplicated": True}
+    if c.get("status") != "submitted":
+        raise HTTPException(409, "nothing to approve")
+    for case in DB.cases_by_contract(cid):
+        if case.get("status") in ("open", "decided") and not (
+                (case.get("decision") or {}).get("settlement_authorised")):
+            raise HTTPException(409, "dispute open — resolve before settlement")
+    sub = c.get("last_submission") or {}
+    tech = sub.get("qc_technical") or {}
+    if not tech.get("file_valid"):
+        raise HTTPException(422, "submission undecodable — request a correction round")
+    if tech.get("clipping_detected") or not tech.get("noise_threshold_passed", True):
+        raise HTTPException(409, "correctable audio defect — use the correction round")
+    nid = c.get("narrator_id")
+    stored = DB.get_intent(cid) or {}
+    pi = E.PaymentIntent(intent_id=stored.get("intent_id", ""),
+                        contract_id=cid,
+                        amount_minor=int(stored.get("amount_minor",
+                                                   int(c.get("payout_usd", 0) * 100))),
+                        idempotency_key=stored.get("idempotency_key", uid("idem_")))
+    if pi.intent_id not in rail.locked:
+        rail.lock(pi)  # restart tolerance: re-establish the lock, then release
+    try:
+        rel = rail.release(pi, nid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    late = False
+    try:
+        dl = _dt.datetime.strptime(c.get("deadline_at", ""), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=_dt.timezone.utc)
+        late = _dt.datetime.now(_dt.timezone.utc) > dl
+    except Exception:
+        pass
+    rep = _get_rep(nid)
+    rep.record_outcome({"verified": True, "worker_fault": False,
+                        "scores": {"Q": 1.0, "D": 0.0 if late else 1.0}})
+    _save_rep(nid, rep)
+    DB.record_fin("payout", rel["amount_minor"], "")
+    c["status"] = "settled"
+    c["settled_at"] = utcnow_now()
+    c["settlement"] = {"to": rel["to"], "amount_minor": rel["amount_minor"],
+                       "late": late, "intent_id": pi.intent_id}
+    DB.save_contract(c)
+    _ev(cid, "creator.approved", {}, ag["agent_id"], "agent")
+    _ev(cid, "settlement.released", c["settlement"], "platform")
+    _ev(cid, "reputation.updated", {"narrator": nid, "completed": rep.completed}, "platform")
+    return {"contract": c, "settlement": c["settlement"]}
+
+
+@app.get("/v1/contracts/{cid}/receipt")
+def receipt(cid: str, x_hv_session: str | None = Header(None),
+            x_hv_agent_key: str | None = Header(None)):
+    """Settlement receipt: contract + funding + settlement + verified chain."""
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = _party_only(cid, nid, aid)
+    if c.get("status") != "settled":
+        raise HTTPException(409, "not settled yet")
+    ok, chain = led.verify_chain(cid)
+    return {"contract_id": cid, "payout_usd": c.get("payout_usd"),
+            "narrator": c.get("narrator_id"), "settlement": c.get("settlement"),
+            "funding": DB.get_intent(cid), "chain_verified": ok, "chain": chain,
+            "policy_version": POLICY_VERSION}
 
 
 @app.post("/v1/contracts/{cid}/reviews")
@@ -802,3 +1002,333 @@ def appeal(case_id: str, body: dict[str, Any], x_hv_session: str | None = Header
     DB.save_case(case)
     _ev(case["contract_id"], "appeal.opened", {"case": case_id})
     return case["appeal"]
+
+
+# ---------- studio: presets + delivery packs ----------
+
+def _resolve_preset(preset_id: str, ag: dict | None) -> dict:
+    from hv import presets as _pr
+    if preset_id in _pr.BUILTINS:
+        return {"name": preset_id, **_pr.BUILTINS[preset_id]}
+    if ag:
+        for key in (preset_id, f"{ag['agent_id']}/{preset_id}"):
+            doc = DB.get_preset(key)
+            if doc and doc.get("owner") == ag["agent_id"]:
+                return doc
+    raise HTTPException(404, "unknown preset")
+
+
+@app.post("/v1/studio/presets")
+def create_preset(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Save a channel sound preset. Namespaced per agent; builtins are read-only."""
+    from hv import presets as _pr
+    ag = _agent(x_hv_agent_key)
+    errs = _pr.validate(body)
+    if errs:
+        raise HTTPException(422, "; ".join(errs))
+    if body["name"] in _pr.BUILTINS:
+        raise HTTPException(409, "builtin preset names are reserved")
+    doc = {**_pr.normalize(body), "owner": ag["agent_id"]}
+    doc["name"] = f"{ag['agent_id']}/{body['name']}"
+    DB.save_preset(doc)
+    _ev(doc["name"], "preset.saved", {"preset": doc["name"]}, ag["agent_id"], "agent")
+    return {"preset": doc}
+
+
+@app.get("/v1/studio/presets")
+def list_presets(x_hv_agent_key: str | None = Header(None)):
+    from hv import presets as _pr
+    ag = _agent(x_hv_agent_key)
+    own = [d for d in DB.list_presets() if d.get("owner") == ag["agent_id"]]
+    return {"builtins": [{"name": k, **v} for k, v in _pr.BUILTINS.items()],
+            "custom": own}
+
+
+@app.get("/v1/studio/presets/{name:path}")
+def get_preset(name: str, x_hv_agent_key: str | None = Header(None)):
+    ag = _agent(x_hv_agent_key)
+    return {"preset": _resolve_preset(name, ag)}
+
+
+def _transcribe_file(path: str, language: str = "en") -> dict:
+    from hv import transcribe as _tr
+    try:
+        with open(path, "rb") as f:
+            return _tr.transcribe(f.read(), language)
+    except Exception as e:
+        return {"text": "", "segments": [], "provider": "error",
+                "note": str(e)[:100]}
+
+
+@app.post("/v1/contracts/{cid}/pack")
+def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Assemble the delivery pack: original (immutable) + basic master/MP3/SRT,
+    optionally the studio upgrade under a channel preset. Processing fees are
+    a separate HumanVoiced service line — narrator payout is never touched."""
+    from hv import packages as _pk
+    from hv import presets as _pr
+    from hv import processing as _proc
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "only the contracting agent packs")
+    if c.get("status") not in ("submitted", "settled"):
+        raise HTTPException(409, "pack needs a submitted recording")
+    tier = body.get("tier", "basic")
+    if tier not in ("basic", "studio"):
+        raise HTTPException(422, "tier must be basic or studio")
+    fee = P.processing_quote(tier)
+    preset = None
+    if tier == "studio":
+        if not ALLOW_SIMULATED:
+            raise HTTPException(501, "studio billing needs a production rail; "
+                                     "basic pack remains available")
+        preset = _resolve_preset(body.get("preset_id") or "calm-documentary", ag)
+    sub = c.get("last_submission") or {}
+    sha = sub.get("sha256", "")
+    from pathlib import Path as _P
+    _cand = str(_P(UPL.RAW_DIR, sha + ".wav"))
+    _mas = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid, "assembled.wav")
+    src = _cand if sha and _P(_cand).exists() else _mas
+    if not sha or not _P(src).exists():
+        raise HTTPException(422, "original bytes missing server-side")
+    out_dir = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid)
+    try:
+        assets = _proc.basic_pack(src, out_dir, target_lufs=_pr.REFERENCE_LUFS)
+        tx = _transcribe_file(src)
+        segments = tx.get("segments") or []
+        srt = _proc.srt_from_segments(segments)
+        if srt:
+            spath = os.path.join(out_dir, "transcript.srt")
+            with open(spath, "w") as f:
+                f.write(srt)
+            assets["transcript.srt"] = spath
+        integrity = None
+        if tier == "studio":
+            st = _proc.studio_master(src, out_dir, preset)
+            assets.update(st)
+            stx = _transcribe_file(st["studio.wav"])
+            integrity = _proc.integrity_check(src, st["studio.wav"],
+                                             tx.get("text", ""), stx.get("text", ""))
+            if not integrity["passed"]:
+                c["pack_review"] = "manual_review"
+        manifest = _pk.build_manifest(c, sha, assets, tx.get("text", ""),
+                                      segments, fee["processing_fee_usd"],
+                                      tier, preset, integrity)
+        manifest["source"] = "assembled_master" if (c.get("assembly") or {}).get(
+            "master_sha256") == sha else "single_submission"
+        manifest["edit_map"] = (c.get("assembly") or {}).get("edit_map", [])
+        manifest["session"] = c.get("session") or {}
+        # original take(s) stay fetchable as evidence: resolve raw or assembled bytes
+        _raw = str(_P(UPL.RAW_DIR, sha + ".wav"))
+        _asm = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid, "assembled.wav")
+        _opath = _raw if os.path.exists(_raw) else (_asm if os.path.exists(_asm) else "")
+        if _opath:
+            manifest["files"]["original.wav"] = {"sha256": sha,
+                                                 "bytes": os.path.getsize(_opath)}
+    except _proc.ProcessingError as e:
+        raise HTTPException(502, str(e))
+    for name, path in assets.items():
+        if not isinstance(path, str) or not os.path.isfile(path):
+            continue  # measured stats / chain descriptions, not deliverables
+        DB.save_asset({"sha256": _proc.sha_file(path), "contract_id": cid,
+                       "kind": name, "path": path})
+    c["pack"] = {"tier": tier, "manifest": manifest,
+                 "fee_usd": fee["processing_fee_usd"],
+                 "fee_note": fee["note"]}
+    DB.save_contract(c)
+    _ev(cid, "pack.built", {"tier": tier, "fee_usd": fee["processing_fee_usd"],
+                            "files": sorted(manifest["files"])}, ag["agent_id"], "agent")
+    return {"manifest": manifest, "processing_fee": fee}
+
+
+@app.get("/v1/contracts/{cid}/pack")
+def get_pack(cid: str, x_hv_session: str | None = Header(None),
+             x_hv_agent_key: str | None = Header(None)):
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = _party_only(cid, nid, aid)
+    if not c.get("pack"):
+        raise HTTPException(404, "no pack built yet")
+    return c["pack"]
+
+
+@app.get("/v1/contracts/{cid}/pack/download")
+def download_asset(cid: str, asset: str = "", x_hv_session: str | None = Header(None),
+                   x_hv_agent_key: str | None = Header(None)):
+    from fastapi.responses import Response as _Resp
+    from pathlib import Path as _P
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = _party_only(cid, nid, aid)
+    pack = c.get("pack") or {}
+    files = (pack.get("manifest") or {}).get("files") or {}
+    if asset not in files:
+        raise HTTPException(404, "unknown asset in this pack")
+    # Party-scoped deliverables only: asset names come from the manifest,
+    # never from free-form paths.
+    if asset == "original.wav":
+        cand = str(_P(UPL.RAW_DIR, pack["manifest"]["original_sha256"] + ".wav"))
+        fpath = cand if os.path.exists(cand) else os.path.join(
+            os.getenv("HV_PACK_DIR", "data/packs"), cid, "assembled.wav")
+    else:
+        fpath = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid, asset)
+    if not os.path.exists(fpath):
+        raise HTTPException(404, "asset bytes missing")
+    media = "audio/wav" if asset.endswith(".wav") else (
+        "audio/mpeg" if asset.endswith(".mp3") else "application/octet-stream")
+    return _Resp(open(fpath, "rb").read(), media_type=media,
+                 headers={"Content-Disposition": f"attachment; filename={asset}"})
+
+
+# ---------- modular capture: passages, takes, assembly ----------
+
+def _seg_state(c: dict, seg: str) -> dict:
+    st = (c.get("segments_state") or {}).get(seg)
+    if not st:
+        raise HTTPException(404, "unknown segment")
+    return st
+
+
+def _can_read(cid: str, nid: str | None, aid: str | None) -> dict:
+    """Party contract, or an offered narrator reviewing the job."""
+    try:
+        return _party_only(cid, nid, aid)
+    except Exception:
+        if nid and DB.is_offered(cid, nid):
+            return DB.get_contract(cid)
+        raise
+
+
+@app.get("/v1/contracts/{cid}/segments")
+def get_segments(cid: str, x_hv_session: str | None = Header(None),
+                 x_hv_agent_key: str | None = Header(None)):
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = _can_read(cid, nid, aid)
+    if not c:
+        raise HTTPException(404, "unknown contract")
+    return {"manifest": c.get("segment_manifest"), "state": c.get("segments_state")}
+
+
+@app.post("/v1/contracts/{cid}/segments/{seg}/takes")
+async def record_take(cid: str, seg: str, request: Request,
+                      x_hv_session: str | None = Header(None)):
+    """One passage take. Failed attempts are kept as capture evidence —
+    a recording record, not a proof-of-humanity claim."""
+    nid = _narrator(x_hv_session)
+    c = DB.get_contract(cid)
+    if not c or c.get("narrator_id") != nid:
+        raise HTTPException(403, "only the assigned narrator records takes")
+    if c.get("status") not in ("accepted", "in_correction"):
+        raise HTTPException(409, "contract not recording")
+    st = _seg_state(c, seg)
+    body: bytes = await request.body()
+    if len(body) > MAX_UPLOAD_BYTES or len(body) < 44 or body[:4] != b"RIFF":
+        raise HTTPException(422, "send WAV bytes under 50MB")
+    try:
+        receipt = UPL.store_upload(body, f"take:{cid}:{seg}")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    DB.record_upload(receipt["sha256"], cid, nid, receipt["bytes"])
+    take = {"sha256": receipt["sha256"], "bytes": receipt["bytes"],
+            "attempt": len(st["takes"]) + 1, "at": utcnow_now()}
+    st["takes"].append(take)
+    st["needs_retake"] = False
+    c.setdefault("session", {}).setdefault("takes", 0)
+    c["session"]["takes"] += 1
+    DB.save_contract(c)
+    _ev(cid, "take.recorded", {"seg": seg, "attempt": take["attempt"],
+                               "sha256": take["sha256"]}, nid, "narrator")
+    return take
+
+
+@app.post("/v1/contracts/{cid}/segments/{seg}/accept")
+def accept_take(cid: str, seg: str, body: dict[str, Any],
+                x_hv_session: str | None = Header(None)):
+    nid = _narrator(x_hv_session)
+    c = DB.get_contract(cid)
+    if not c or c.get("narrator_id") != nid:
+        raise HTTPException(403, "only the assigned narrator accepts takes")
+    st = _seg_state(c, seg)
+    sha = body.get("sha256", "")
+    if not any(t["sha256"] == sha for t in st["takes"]):
+        raise HTTPException(422, "unknown take for this passage")
+    st["accepted"] = sha
+    DB.save_contract(c)
+    _ev(cid, "take.accepted", {"seg": seg, "sha256": sha}, nid, "narrator")
+    return {"ok": True, "accepted": sha}
+
+
+@app.post("/v1/contracts/{cid}/segments/{seg}/retake")
+def flag_retake(cid: str, seg: str, body: dict[str, Any],
+                x_hv_agent_key: str | None = Header(None)):
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "only the contracting agent flags retakes")
+    st = _seg_state(c, seg)
+    st["needs_retake"] = True
+    st["retake_note"] = (body.get("note") or "")[:300]
+    c.setdefault("session", {}).setdefault("retakes", 0)
+    c["session"]["retakes"] += 1
+    DB.save_contract(c)
+    _ev(cid, "take.retake_requested", {"seg": seg, "note": st["retake_note"]},
+        ag["agent_id"], "agent")
+    return {"ok": True, "needs_retake": True}
+
+
+@app.post("/v1/contracts/{cid}/assemble")
+def assemble(cid: str, body: dict[str, Any],
+             x_hv_session: str | None = Header(None),
+             x_hv_agent_key: str | None = Header(None)):
+    """Build the timeline master from accepted takes. Never time-stretches:
+    hard-window overflow rejects with details for a shorter script/retake."""
+    from hv import assembly as _as
+    from hv import qc as _qc
+    from pathlib import Path as _P
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c:
+        raise HTTPException(404, "unknown contract")
+    if not ((nid and nid == c.get("narrator_id")) or (aid and aid == c.get("agent_id"))):
+        raise HTTPException(403, "only contract parties assemble")
+    if c.get("status") not in ("accepted", "in_correction"):
+        raise HTTPException(409, "contract not recording")
+    manifest = c.get("segment_manifest") or {"segments": []}
+    state = c.get("segments_state") or {}
+    missing = [s["id"] for s in manifest["segments"]
+               if not (state.get(s["id"]) or {}).get("accepted")]
+    if missing:
+        raise HTTPException(409, "passages without accepted takes: " + ",".join(missing))
+    take_paths = {}
+    for s in manifest["segments"]:
+        sha = state[s["id"]]["accepted"]
+        fpath = str(_P(UPL.RAW_DIR, sha + ".wav"))
+        if not _P(fpath).exists():
+            raise HTTPException(422, f"take bytes missing for {s['id']}")
+        take_paths[s["id"]] = fpath
+    out_dir = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid)
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        res = _as.assemble(manifest["segments"], take_paths,
+                           os.path.join(out_dir, "assembled.wav"))
+    except _as.AssemblyError as e:
+        raise HTTPException(422, str(e))
+    sub = {"submission_id": uid("sub_"), "sha256": res["master_sha256"],
+           "bytes": os.path.getsize(res["path"]), "assembled": True,
+           "version": c.get("submission_version", 0) + 1}
+    c["submission_version"] = sub["version"]
+    c["status"] = "submitted"
+    c["assembly"] = res
+    c.setdefault("session", {}).setdefault("assemblies", 0)
+    c["session"]["assemblies"] += 1
+    DB.save_contract(c)
+    _ev(cid, "assembly.built", {"master": res["master_sha256"],
+                                "total_ms": res["total_ms"],
+                                "segments": len(res["edit_map"])},
+        nid or aid or "?", "narrator" if nid else "agent")
+    tech = _qc.tech_checks(res["path"])
+    _ev(cid, "qc.completed", {"submission": sub["submission_id"], "technical": tech})
+    sub["qc_technical"] = tech
+    c["last_submission"] = sub
+    DB.save_contract(c)
+    return {"master": res["master_sha256"], "total_ms": res["total_ms"],
+            "edit_map": res["edit_map"]}

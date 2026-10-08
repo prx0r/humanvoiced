@@ -1,13 +1,14 @@
-"""Pricing engine — LIBRARY.md §5 curve + WEDGE rarity/tiers.
+"""Pricing engine — fitted curve + heat tiers, zero commission.
 
-Customer curve P(t) on finished-audio minutes t:
-  P(t) = 1 + min(t,10) + 0.75*max(0,min(t,30)-10) + 0.50*max(0,t-30)
-15s→$1.25 · 1m→$2 · 5m→$6 · 10m→$11 · 20m→$18.50 · 30m→$26 · 60m→$41.
+Customer curve P(t) = 1.5362 + 1.6503*t^0.71 (t in finished-audio minutes):
+15s→$2.15 · 1m→$3.19 · 5m→$6.71 · 10m→$10 · 20m→$15.38 · 30m→$20 · 60m→$31.74.
 
-Unit price holds for batched clips; single checkout minimum $3.50.
-Narrator share 75% with $2.25 minimum payout. Duration derives from frozen
-script word count at agreed pace — never from narrator speed.
-Premiums multiply: proven 1.3×, specialist/scarce 1.8×, priority 1.5×.
+Single checkout minimum $3.50 (batched clips keep unit price).
+Narrator receives 100% of the customer price (0% platform commission;
+processor/escrow costs are a platform expense, donations separate).
+Minimum narrator payout $2.25. Duration derives from frozen script word
+count at agreed pace — never from narrator speed.
+Tier multipliers: standard 1.0×, proven 1.3×, specialist 1.8×, priority 1.5×.
 """
 from __future__ import annotations
 
@@ -94,3 +95,25 @@ def tier_for(completed: int, on_time_rate: float | None) -> float:
     if on_time_rate >= 0.90:
         return 1.2
     return TIERS["standard"]
+
+
+# Studio processing revenue (HumanVoiced service lines, NOT commission).
+# Basic pack is included in the marketplace service ($0). Studio upgrades
+# are disclosed as a separate buyer-paid fee and NEVER deducted from the
+# narrator's agreed payout. Prices illustrative, not validated.
+PROCESSING = {
+    "basic_pack_usd": 0.0,
+    "studio_upgrade_usd": 3.00,
+}
+
+
+def processing_quote(tier: str = "basic") -> dict:
+    """Separate service-line quote. Narrator payout is untouched by design."""
+    if tier == "studio":
+        return {"tier": "studio",
+                "processing_fee_usd": PROCESSING["studio_upgrade_usd"],
+                "narrator_payout_change_usd": 0.0,
+                "note": "HumanVoiced service, billed separately from narration"}
+    return {"tier": "basic", "processing_fee_usd": 0.0,
+            "narrator_payout_change_usd": 0.0,
+            "note": "included in the marketplace service"}

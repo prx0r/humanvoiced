@@ -1,11 +1,18 @@
-# web/ — portfolio + contract + dispute UI
+# web/ — static Pages site (no framework)
 
-Target: Next.js 14 + Tailwind + shadcn/ui (matches reuse set).
-Current: static prototype pages below, same copy/structure, migratable 1:1.
+Source: `humanvoiced_frontend.zip` (stallshark bucket) + `contract.html`/`index.html`.
+Preview concept renders included in the ZIP (not deployed).
 
-- `portfolio.html` — narrator portfolio (§2): samples (consent-gated), 90-day +
-  12-month stats with sample counts, New-voice label, availability.
-- `contract.html` — HV-1042 contract UI (§3): payout, deadline countdown
-  (server time), criteria, accept/decline/counteroffer (design-task buttons).
-- `dispute.html` — evidence-gated case view (§7): relevant evidence only,
-  both-sides responses, written decision + appeal window.
+- `onboard.html` + `studio.js` — Voice Studio: record → IndexedDB (`pending-onboarding`)
+  survives OAuth → Google sign-in → upload → draft → edit → consent → publish.
+  Status via `GET /api/auth/me`; `?demo=1` runs fully offline (localStorage).
+- `portfolio.html` + `portfolio.js` — public portfolio `?h=handle`: playable
+  consented samples, tags, verified-work counts, booking CTA.
+- `brief.html` — creator brief explainer: script-only default, optional video,
+  sync-to-picture, stage direction, paid custom auditions.
+- `hv.css` — shared styling.
+- `contract.html` — HV-1042 contract UI sketch (design-task buttons, not wired).
+- `index.html` — landing stub.
+
+Target: Next.js 14 + Tailwind + shadcn/ui (matches reuse set). Current static
+pages are migratable 1:1. Dispute UI (`dispute.html`) not yet built.

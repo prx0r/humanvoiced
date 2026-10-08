@@ -25,6 +25,9 @@ class Store:
         conn.execute("CREATE TABLE IF NOT EXISTS uploads (sha256 TEXT PRIMARY KEY, contract_id TEXT, narrator_id TEXT, bytes INT, at REAL)")
         conn.execute("CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, doc TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS agents (key_hash TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS presets (id TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS assets (sha256 TEXT PRIMARY KEY, doc TEXT)")
         conn.commit()
         conn.close()
 
@@ -100,11 +103,72 @@ class Store:
         conn.commit()
         conn.close()
 
+    def reserve_spend(self, agent_id: str, day: str, amount_minor: int, cap_minor: int) -> bool:
+        """Atomic budget reservation: check cap + increment in one transaction."""
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT amount_minor FROM spend WHERE agent_id=? AND day=?",
+                               (agent_id, day)).fetchone()
+            used = row[0] if row else 0
+            if used + amount_minor > cap_minor:
+                conn.rollback()
+                return False
+            conn.execute("INSERT INTO spend VALUES (?, ?, ?) ON CONFLICT(agent_id, day) "
+                         "DO UPDATE SET amount_minor=amount_minor+?",
+                         (agent_id, day, amount_minor, amount_minor))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
     def day_spend(self, agent_id: str, day: str) -> int:
         conn = self._conn()
         row = conn.execute("SELECT amount_minor FROM spend WHERE agent_id=? AND day=?", (agent_id, day)).fetchone()
         conn.close()
         return row[0] if row else 0
+
+    def save_agent(self, key_hash: str, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO agents VALUES (?, ?)", (key_hash, json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_agent(self, key_hash: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM agents WHERE key_hash=?", (key_hash,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+
+    def save_preset(self, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO presets VALUES (?, ?)", (doc["name"], json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_preset(self, name: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM presets WHERE id=?", (name,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+
+    def list_presets(self) -> list[dict]:
+        conn = self._conn()
+        rows = conn.execute("SELECT doc FROM presets").fetchall()
+        conn.close()
+        return [json.loads(r[0]) for r in rows]
+
+    def save_asset(self, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO assets VALUES (?, ?)", (doc["sha256"], json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_asset(self, sha: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM assets WHERE sha256=?", (sha,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
 
     def save_narrator(self, doc: dict):
         conn = self._conn()
@@ -118,8 +182,11 @@ class Store:
         conn.close()
         return json.loads(row[0]) if row else None
 
-    def accept_atomic(self, cid: str, nid: str) -> dict | None:
-        """Exclusive claim: only offered contracts, one winner. Returns doc or None."""
+    def accept_atomic(self, cid: str, nid: str, assign: dict | None = None) -> dict | None:
+        """Exclusive claim + status transition in ONE transaction.
+        Only offered/proposed contracts with a live offer row. Sets status and
+        narrator atomically so double-accept (same or competing narrator) yields
+        exactly one winner. Returns updated doc or None."""
         conn = self._conn()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -137,11 +204,21 @@ class Store:
             if not off:
                 conn.rollback()
                 return None
-            conn.execute("DELETE FROM offers WHERE contract_id=? AND narrator_id!=?", (cid, nid))
+            if assign:
+                c.update(assign)
+            conn.execute("UPDATE contracts SET doc=? WHERE id=?", (_j.dumps(c), cid))
+            conn.execute("DELETE FROM offers WHERE contract_id=?", (cid,))
             conn.commit()
             return c
         finally:
             conn.close()
+
+    def decline_offer(self, cid: str, nid: str):
+        """Declining revokes the offer row so a declined narrator cannot accept."""
+        conn = self._conn()
+        conn.execute("DELETE FROM offers WHERE contract_id=? AND narrator_id=?", (cid, nid))
+        conn.commit()
+        conn.close()
 
     def set_status(self, cid: str, status: str, extra: dict | None = None):
         conn = self._conn()
@@ -185,6 +262,20 @@ class Store:
         row = conn.execute("SELECT doc FROM cases WHERE id=?", (case_id,)).fetchone()
         conn.close()
         return json.loads(row[0]) if row else None
+
+    def cases_by_contract(self, cid: str) -> list[dict]:
+        conn = self._conn()
+        rows = conn.execute("SELECT doc FROM cases").fetchall()
+        conn.close()
+        out = []
+        for (doc,) in rows:
+            try:
+                d = json.loads(doc)
+            except Exception:
+                continue
+            if d.get("contract_id") == cid:
+                out.append(d)
+        return out
 
     def list_narrators(self) -> list[dict]:
         conn = self._conn()

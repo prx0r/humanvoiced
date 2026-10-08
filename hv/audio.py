@@ -7,7 +7,34 @@ behind transcribe.py / describe.py without touching the schema.
 """
 from __future__ import annotations
 
-PIPELINE_VERSION = "2026-10-08.1"
+PIPELINE_VERSION = "2026-10-08.2"
+
+
+def decode_wav_mono(wav_bytes: bytes, max_seconds: int = 120) -> tuple[list[float], int]:
+    """Decode 16-bit PCM WAV bytes to mono float frames (-1..1), downmixing
+    channels by averaging complete frames. Raises ValueError on bad input."""
+    import io as _io
+    import struct as _st
+    import wave as _wv
+    with _wv.open(_io.BytesIO(wav_bytes), "rb") as _w:
+        ch, sw, sr, n = _w.getnchannels(), _w.getsampwidth(), _w.getframerate(), _w.getnframes()
+        if sw != 2:
+            raise ValueError("only 16-bit PCM supported")
+        if ch not in (1, 2) or n <= 0:
+            raise ValueError("invalid WAV parameters")
+        raw = _w.readframes(n)
+    total_samples = len(raw) // 2
+    nframes = total_samples // ch
+    fmt = "<" + "h" * total_samples
+    ints = _st.unpack(fmt, raw[:total_samples * 2])
+    mono: list[float] = []
+    for i in range(nframes):
+        s = 0
+        for c in range(ch):
+            s += ints[i * ch + c]
+        mono.append((s / ch) / 32768.0)
+    cap = sr * max_seconds
+    return mono[:cap], sr
 
 
 def vad_segments(frames: list[float], sample_rate: int, thresh: float = 0.02) -> list[dict]:
@@ -37,12 +64,17 @@ def acoustic(frames: list[float], sample_rate: int, segments: list[dict]) -> dic
     gaps.sort()
     def pct(q):
         return round(gaps[min(len(gaps) - 1, int(q * len(gaps)))] * 1000) if gaps else 0
+    mean_sq = sum(x * x for x in frames) / len(frames) if frames else 0.0
+    if mean_sq <= 0:
+        rms_dbfs = -96.0
+    else:
+        rms_dbfs = round(10 * math.log10(mean_sq), 2)  # == 20*log10(rms)
     return {"speech_fraction": round(speech / total, 3) if total else 0.0,
             "peak": round(peak, 4),
             "clipping_detected": peak >= 0.999,
             "pause_mean_ms": round(sum(gaps) / len(gaps) * 1000) if gaps else 0,
             "pause_median_ms": pct(0.5), "pause_p90_ms": pct(0.9),
-            "rms_dbfs": round(20 * math.log10(sum(x * x for x in frames) / len(frames)) , 2) if frames else -96.0,
+            "rms_dbfs": rms_dbfs,
             "uncertainty": "energy-vad fallback; replace with Silero + pitch tracker"}
 
 
@@ -54,17 +86,21 @@ VOCAB = {"texture": ["smooth", "breathy", "husky", "raspy", "grainy", "airy"],
 
 
 def describe_stub(transcript: str, acoustic_m: dict) -> dict:
-    """Shape of the audio-LLM output (Gemini/Qwen3-Omni plug in here).
-    Conservative: graded multi-labels with evidence placeholders, unknowns
-    allowed, no demographics, no overall score."""
+    """Honest placeholder shape when no audio-capable model is available.
+    Perceptual fields are `unknown` — never manufactured. The audio-LLM
+    (Qwen3-Omni/Gemini) plugs in here via hv/describe.py without touching
+    callers. Deterministic acoustic measurements remain the only trusted data.
+    """
     words = transcript.split()
-    return {"texture": [{"label": "smooth", "confidence": "uncalibrated",
-                         "evidence": {"start_sec": 0.0, "end_sec": 10.0}}],
-            "prosody": [{"label": "conversational", "confidence": "uncalibrated",
-                         "evidence": {"start_sec": 10.0, "end_sec": 20.0}}],
-            "energy": "moderate", "delivery": ["natural_storytelling"],
-            "description": f"Natural read, ~{len(words)} words transcribed.",
-            "model": "stub-0.1", "forbidden_inferred": []}
+    return {"texture": [{"label": "unknown", "confidence": "none",
+                         "evidence": {"start_sec": 0.0, "end_sec": 0.0}}],
+            "prosody": [{"label": "unknown", "confidence": "none",
+                         "evidence": {"start_sec": 0.0, "end_sec": 0.0}}],
+            "energy": "unknown", "delivery": [],
+            "description": (f"Perceptual analysis pending audio-capable model; "
+                            f"~{len(words)} words transcribed, measurements only."),
+            "model": "stub-0.1", "placeholders": True,
+            "forbidden_inferred": []}
 
 
 def merge(sample_sha: str, acoustic_m: dict, described: dict, transcript: str) -> dict:

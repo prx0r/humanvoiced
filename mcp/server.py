@@ -14,14 +14,11 @@ from hv import reputation as R
 
 TOOLS = [
     {"name": "hv.voices.search", "description": "Ranked narrator search (M(n,j)); New voices get exploration allocation"},
-    {"name": "hv.voices.compare", "description": "Side-by-side samples + explainable suitability rankings"},
-    {"name": "hv.portfolio.get", "description": "Public portfolio: consented samples, windowed stats with sample counts"},
-    {"name": "hv.pricing.quote", "description": "Fixed P(t) quote from frozen script word count; tier + rarity applied"},
     {"name": "hv.reputation.get", "description": "R_n outcome vector (Q,D,A,S,C) + windows + appeals"},
     {"name": "hv.disputes.get_rules", "description": "Published rule IDs (PAY/SLA/QC/REV/DIS/REP) — agents cite, never invent"},
     {"name": "hv.casting.search", "description": "Multi-role cast list: roles with sides matched to character profiles"},
 ]
-COMING = ["hv.portfolio.get", "hv.pricing.quote", "hv.contract.get",
+COMING = ["hv.voices.compare", "hv.portfolio.get", "hv.pricing.quote", "hv.contract.get",
           "hv.contract.events", "hv.support.ask"]
 
 
