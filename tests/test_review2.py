@@ -231,6 +231,14 @@ def test_onboard_persists_recording_static():
     assert "pending-onboarding" in js and "getFloatTimeDomainData" in js
     ws = pathlib.Path("web/workspace.html").read_text()
     assert "/v1/contracts/" in ws and "/submissions" in ws and "/script" in ws
+    cust = pathlib.Path("web/voices.html").read_text()
+    assert "/v1/voices" in cust and "For talent" in cust
+    for p in ("web/index.html", "web/brief.html", "web/portfolio.html", "web/order.html"):
+        assert "For talent" in pathlib.Path(p).read_text(), p
+    for p in ("web/home.html", "web/workspace.html", "web/onboard.html"):
+        html = pathlib.Path(p).read_text()
+        assert "Guide" in html and "Studio" in html, p
+        assert "How jobs work" not in html, p
 
 
 def test_contract_script_party_only(tmp_path):

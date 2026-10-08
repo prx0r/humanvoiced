@@ -1,0 +1,43 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Find voices — HumanVoiced</title><link rel="stylesheet" href="hv.css"><link rel="icon" href="favicon.png?v=2" type="image/png"></head><body>
+<header class="topbar"><div class="shell nav"><a class="brand" href="index.html"><img class="brandmark" src="logo.png" alt="HumanVoiced logo" width="33" height="33">humanvoiced<span style="color:#16734e">.</span></a><nav class="navlinks"><a href="voices.html" class="active" data-nav="voices">Find voices</a><a href="brief.html" data-nav="how">How it works</a><a href="index.html#pricing" data-nav="pricing">Pricing</a><a href="onboard.html" data-nav="talent">For talent</a></nav><div class="navright"><a class="btn small secondary" id="signin" href="https://api.humanvoiced.com/api/auth/google/start?next=/brief.html">Sign in</a></div></div></header>
+<main class="shell"><div class="hero"><div class="eyebrow">Marketplace / Voices</div><h1 class="heading">Hear real people.</h1><p class="lede">Every sample below is a real human who agreed to be heard. Pick a voice, then send your script.</p><div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px"><input id="q-lang" placeholder="Language (e.g. en)" maxlength="8" style="max-width:220px"><button class="btn secondary" id="q-go">Search</button></div></div>
+<div class="layout"><section class="stack"><div id="list"><div class="placeholder">Loading voices…</div></div></section>
+<aside class="sidebar"><div class="card cardpad"><div class="eyebrow">How booking works</div><div class="minilist" style="margin-top:10px"><div class="minirow"><span class="circle">1</span>Choose a voice and send your script.</div><div class="minirow"><span class="circle">2</span>Approve the quote — nothing funds before that.</div><div class="minirow"><span class="circle">3</span>Receive clean + studio audio with full rights.</div></div><div class="rule"></div><a class="btn secondary wide" href="brief.html">Prepare a script →</a></div></aside></div></main>
+<footer class="footer"><div class="shell row between"><span>humanvoiced · Run by a human, with the help of AI.</span><span>Real voices. Real work.</span></div></footer>
+<script>
+(function(){
+'use strict';
+const API='https://api.humanvoiced.com';
+const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+async function load(){
+  const lang=document.getElementById('q-lang').value.trim().toLowerCase().slice(0,8);
+  const box=document.getElementById('list');
+  box.innerHTML='<div class="placeholder">Loading voices…</div>';
+  try{
+    const r=await fetch(API+'/v1/voices'+(lang?('?language='+encodeURIComponent(lang)):''),{credentials:'omit'}).then(x=>x.json());
+    const vs=r.voices||[];
+    if(!vs.length){ box.innerHTML='<div class="placeholder">No published voices yet — be the first to <a href="onboard.html">record yours</a>, or check back soon.</div>'; return; }
+    box.replaceChildren();
+    for(const v of vs){
+      let prof={samples:[]};
+      try{ prof=await fetch(API+'/v1/voices/'+encodeURIComponent(v.id)+'/portfolio',{credentials:'omit'}).then(x=>x.json()); }catch{}
+      const card=document.createElement('div'); card.className='card cardpad';
+      const name=esc(prof.handle||v.handle||v.id);
+      const samples=(prof.samples||[]).slice(0,3);
+      card.innerHTML=`<div class="row between"><div><h2 class="subheading">@${name}</h2><p class="small muted">${esc((v.languages||[]).join(' · ')||'Voice artist')} · ${(prof.reputation||{}).completed||0} jobs</p></div><a class="btn small secondary" href="portfolio.html?h=${encodeURIComponent(prof.handle||v.id)}">Profile →</a></div><div class="sample-list"></div><div class="row" style="margin-top:10px"><a class="btn small" href="brief.html">Book this voice →</a></div>`;
+      const sl=card.querySelector('.sample-list');
+      if(!samples.length){ sl.innerHTML='<p class="small muted">No public samples yet.</p>'; }
+      for(const s of samples){
+        const a=document.createElement('audio'); a.controls=true; a.preload='none'; a.style.width='100%';
+        a.src=`${API}/v1/voices/${encodeURIComponent(v.id)}/sample?sha=${encodeURIComponent(s.sha256)}`;
+        const cap=document.createElement('p'); cap.className='small muted'; cap.textContent=(s.kind||'sample')+' · '+(s.language||'');
+        sl.append(cap,a);
+      }
+      box.append(card);
+    }
+  }catch{ box.innerHTML='<div class="placeholder">Could not load voices. Try again shortly.</div>'; }
+}
+document.getElementById('q-go').onclick=load;
+load();
+})();
+</script></body></html>
