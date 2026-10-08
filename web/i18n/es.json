@@ -1,0 +1,48 @@
+{
+  "nav": {
+    "home": "Inicio",
+    "studio": "Estudio",
+    "voices": "Explorar voces",
+    "how": "Cómo funciona",
+    "start": "Empezar"
+  },
+  "hero": {
+    "eyebrow": "HumanVoiced / Para canales sin rostro",
+    "title": "Tu canal no tiene rostro. No tiene por qué quedarse sin voz.",
+    "lede": "Voces humanas reales. Producción automatizada. Audio listo para YouTube. Envía un guion, elige una persona real y recibe una narración que tu audiencia reconocerá episodio tras episodio.",
+    "cta_record": "Graba tu voz →",
+    "cta_how": "Cómo funciona un trabajo →",
+    "fee_note": "El 100% del pago acordado va al narrador"
+  },
+  "how": {
+    "eyebrow": "Cómo funciona",
+    "title": "Guion dentro, narración fuera.",
+    "s1": "Encuentra la voz de tu canal: escucha personas reales, elige el estilo que encaje.",
+    "s2": "Envía guiones, no instrucciones: tu agente lo envía, nosotros dirigimos y repetimos tomas.",
+    "s3": "Recibe audio listo para YouTube: limpio + estudio, sonido consistente, subtítulos.",
+    "s4": "Recupera esa voz: mismo narrador, mismo sonido, cada episodio."
+  },
+  "pricing": {
+    "eyebrow": "Precios ilustrativos",
+    "title": "Simple, por minuto terminado.",
+    "p1n": "Clip corto (15 s), narración",
+    "p2n": "Video de YouTube (10 min), narración",
+    "p3n": "Narración larga (60 min)",
+    "note": "Pagos de narración arriba, más $1 de servicio por trabajo. El narrador siempre recibe el 100% del pago; la tarifa es ingreso separado de la plataforma, nunca se descuenta. Precios propuestos, no validados."
+  },
+  "side": {
+    "voices_title": "Tu voz puede generar ingresos.",
+    "voices_copy": "Sin experiencia actoral. Sin equipo que comprar. Graba una muestra con tu teléfono para crear tu perfil.",
+    "voices_cta": "Abrir el estudio de voz →",
+    "agents_title": "Narración a través de una API.",
+    "agents_copy": "Contratos, pasajes, tomas, masterización y entrega: legible por máquinas en cada paso.",
+    "agents_cta": "Leer el formato del encargo →",
+    "note": "HumanVoiced no cobra comisión. Prototipo: todo aquí se construye en abierto.",
+    "voices_eyebrow": "Para voces",
+    "agents_eyebrow": "Para creadores y agentes"
+  },
+  "footer": {
+    "left": "humanvoiced · Operado por un humano, con ayuda de la IA.",
+    "right": "Voces reales. Trabajo real."
+  }
+}
