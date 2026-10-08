@@ -184,20 +184,28 @@ def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
 
 @app.post("/v1/narrators/me/sample")
 async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
+    from hv import transcribe as _tr
     nid = _narrator(x_hv_session)
     body = await request.body()
     language = request.query_params.get("language", "en")
     if len(body) > MAX_UPLOAD_BYTES or len(body) < 44 or body[:4] != b"RIFF":
         raise HTTPException(422, "send WAV bytes under 50MB")
     receipt = UPL.store_upload(body, f"sample:{nid}:{language}")
+    try:
+        tx = _tr.transcribe(body, language)
+    except Exception as e:
+        tx = {"text": "", "provider": "error", "note": str(e)[:100]}
     doc = DB.get_narrator(nid) or {"id": nid}
     doc.setdefault("samples", []).append({"sha256": receipt["sha256"],
-                                          "language": language})
+                                          "language": language,
+                                          "transcript_words": len(tx.get("text", "").split())})
     if language not in doc.get("languages", []):
         doc["languages"] = doc.get("languages", []) + [language]
     DB.save_narrator(doc)
-    _ev(nid, "sample.recorded", {"sha256": receipt["sha256"], "language": language}, nid, "narrator")
-    return {"narrator_id": nid, "sample": receipt["sha256"], "language": language}
+    _ev(nid, "sample.recorded", {"sha256": receipt["sha256"], "language": language,
+                                 "provider": tx.get("provider")}, nid, "narrator")
+    return {"narrator_id": nid, "sample": receipt["sha256"], "language": language,
+            "transcript": tx.get("text", ""), "transcript_provider": tx.get("provider")}
 
 
 @app.get("/v1/voices")
