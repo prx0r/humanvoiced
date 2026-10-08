@@ -1,0 +1,43 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Review order — HumanVoiced</title><link rel="stylesheet" href="hv.css"><link rel="icon" href="favicon.png?v=2" type="image/png"></head><body>
+<header class="topbar"><div class="shell nav"><a class="brand" href="index.html"><img class="brandmark" src="logo.png" alt="HumanVoiced logo" width="33" height="33">humanvoiced<span style="color:#16734e">.</span></a><nav class="navlinks"><a href="home.html">Home</a><a href="workspace.html">Studio</a><a href="brief.html">How jobs work</a></nav><div class="navright"><span class="navpill">Order review</span></div></div></header>
+<main class="shell"><div class="hero"><div class="eyebrow">Buyer approval</div><h1 class="heading">Review before anything is funded.</h1><p class="lede">Your agent prepared this order. Nothing is charged or offered to a narrator until you approve the exact terms below.</p></div>
+<div class="layout"><section class="stack"><div class="card cardpad"><div class="eyebrow">Frozen terms</div><div id="terms"><div class="placeholder">Loading order…</div></div></div></section>
+<aside class="sidebar"><div class="card cardpad"><div class="eyebrow">Total</div><h2 class="subheading" id="total" style="margin:9px 0">—</h2><p class="small muted" id="split"></p><button class="btn wide" id="approve" disabled>Approve &amp; fund this order →</button><p class="small muted" id="msg" style="margin-top:10px"></p></div><div class="note">Approving authorizes this exact version only. Any later script, deadline or price change needs a fresh order. Voice cloning is never included.</div></aside></div></main>
+<footer class="footer"><div class="shell row between"><span>humanvoiced · Run by a human, with the help of AI.</span><span>Real voices. Real work.</span></div></footer>
+<script>
+(() => {
+'use strict';
+const API='https://api.humanvoiced.com';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const q=new URLSearchParams(location.search), oid=q.get('o')||'', tok=q.get('t')||'';
+async function boot(){
+  if(!oid||!tok){ $('terms').textContent='This approval link is incomplete.'; return; }
+  let o;
+  try{ o=await fetch(`${API}/v1/orders/${encodeURIComponent(oid)}?t=${encodeURIComponent(tok)}`).then(r=>{if(!r.ok)throw new Error('Order not found or link invalid.');return r.json();}); }
+  catch(e){ $('terms').textContent=e.message; return; }
+  const t=o.quote||{};
+  if(o.status!=='awaiting_buyer_approval'){ $('terms').innerHTML=`<div class="note">This order is already <b>${esc(o.status)}</b>.${o.contract_id?` Contract: ${esc(o.contract_id)}`:''}</div>`; return; }
+  $('terms').innerHTML=
+    `<div class="checkrow"><span>Narrator fee (100% to narrator)</span><b>$${t.narrator_payout_usd}</b></div>`+
+    `<div class="checkrow"><span>Recording length</span><b>~${t.minutes} min · ${t.words} words</b></div>`+
+    `<div class="checkrow"><span>Delivery</span><b>${Math.round((t.delivery_seconds||7200)/3600*10)/10}h from acceptance</b></div>`+
+    `<div class="checkrow"><span>Correction rounds included</span><b>${t.included_corrections}</b></div>`+
+    `<div class="checkrow"><span>Commercial usage</span><b>${esc(t.commercial_usage)}</b></div>`+
+    `<div class="checkrow"><span>Review window</span><b>24h, then auto-accept unless disputed</b></div>`+
+    `<div class="checkrow"><span>Voice cloning</span><b>Not included, ever</b></div>`+
+    `<div class="checkrow"><span>Script hash</span><b>${esc((t.script_sha256||'').slice(0,16))}…</b></div>`;
+  $('total').textContent='$'+t.customer_price_usd;
+  $('split').textContent=`Narrator receives $${t.narrator_payout_usd}. No platform commission; processing services (if any) are billed separately.`;
+  const btn=$('approve'); btn.disabled=false;
+  btn.onclick=async()=>{ btn.disabled=true; $('msg').textContent='Authorizing…';
+    try{
+      const r=await fetch(`${API}/v1/orders/${encodeURIComponent(oid)}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({token:tok,terms_hash:o.terms_hash})});
+      const j=await r.json(); if(!r.ok)throw new Error(j.detail||'Approval failed');
+      $('msg').textContent=`Funded ✓ Contract ${j.contract_id} offered to the narrator.`;
+      btn.textContent='Approved ✓';
+    }catch(e){ $('msg').textContent=e.message; btn.disabled=false; } };
+}
+boot();
+})();
+</script></body></html>

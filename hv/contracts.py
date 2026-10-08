@@ -78,7 +78,7 @@ def from_brief(brief: dict, script_text: str, principal_id: str, agent_id: str) 
         script_sha256=sha256(script_text),
         brief_sha256=sha256(str(sorted(brief.items()))),
         payout_usd=float(brief.get("payout_usd", 0)),
-        delivery_seconds=int(brief.get("delivery_seconds", 7200)),
+        delivery_seconds=int(brief.get("delivery_seconds") or 7200),
         commercial_usage=brief.get("commercial_usage", "online_video"),
         voice_cloning_allowed=False,
         status="proposed",

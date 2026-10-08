@@ -1586,3 +1586,116 @@ def rebook(chid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(
         {"channel": chid, "narrator": ch["narrator_id"]}, ag["agent_id"], "agent")
     return {"contract": doc, "funding": funding, "price": priced,
             "channel": ch["name"]}
+
+
+# ---------- orders: draft → buyer_authorized → funded (never agent-only) ----------
+
+ORDER_TTL_SECONDS = 24 * 3600
+
+
+def _order_terms(brief: dict, priced: dict, script: str) -> dict:
+    import json as _j
+    return {"script_sha256": sha256(script),
+            "words": len(script.split()),
+            "minutes": priced["minutes"],
+            "narrator_payout_usd": priced["narrator_payout"],
+            "customer_price_usd": priced.get("customer_price"),
+            "delivery_seconds": priced.get("delivery_seconds"),
+            "tier": priced.get("tier", "standard"),
+            "commercial_usage": brief.get("commercial_usage", "online_video"),
+            "included_corrections": 1,
+            "review_window_seconds": 86400,
+            "voice_cloning_allowed": False}
+
+
+@app.post("/v1/orders/draft")
+def draft_order(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Agent proposes; nothing is funded. Returns terms + approval URL for
+    the paying human. Funding happens only after buyer authorization."""
+    import json as _j
+    import secrets as _s
+    ag = _agent(x_hv_agent_key)
+    script = brief.get("script_text", "")
+    c, priced = _quote_for(brief, ag)  # validates + budget-checks, reserves nothing
+    terms = _order_terms(brief, {**priced,
+                                 "delivery_seconds": c.delivery_seconds,
+                                 "tier": brief.get("tier", "standard")}, script)
+    token = _s.token_urlsafe(32)
+    oid = "hvo_" + uid()[:12]
+    now = _dt.datetime.now(_dt.timezone.utc)
+    doc = {"order_id": oid, "status": "awaiting_buyer_approval",
+           "agent_id": ag["agent_id"], "principal_id": ag["principal_id"],
+           "brief": {k: brief.get(k) for k in ("script_text", "tier", "delivery_seconds",
+                                              "narrator_ids", "brief", "commercial_usage")},
+           "quote": terms, "terms_hash": sha256(_j.dumps(terms, sort_keys=True)),
+           "token_hash": sha256(token),
+           "budget": {"max_job_minor": ag["max_job_minor"],
+                      "max_daily_minor": ag.get("max_daily_minor", 10 ** 12)},
+           "expires_at": (now + _dt.timedelta(seconds=ORDER_TTL_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "approval": None, "contract_id": None}
+    DB.save_order(doc)
+    _ev(oid, "order.drafted", {"terms_hash": doc["terms_hash"],
+                               "total_usd": terms["customer_price_usd"]},
+        ag["agent_id"], "agent")
+    return {"order_id": oid, "status": doc["status"], "quote": terms,
+            "terms_hash": doc["terms_hash"], "expires_at": doc["expires_at"],
+            "approval_url": f"https://humanvoiced.com/order.html?o={oid}&t={token}",
+            "approval_token": token,
+            "note": "deliver the approval URL to the paying human privately; "
+                    "nothing is funded until they approve"}
+
+
+@app.get("/v1/orders/{oid}")
+def get_order(oid: str, t: str = ""):
+    """Approval-URL view: bearer token reveals the frozen terms. No token,
+    no terms — order IDs alone disclose nothing."""
+    o = DB.get_order(oid)
+    if not o or o.get("token_hash") != sha256(t or ""):
+        raise HTTPException(404, "unknown order")
+    return {"order_id": oid, "status": o["status"], "quote": o["quote"],
+            "terms_hash": o["terms_hash"], "expires_at": o["expires_at"],
+            "approval": o.get("approval"),
+            "contract_id": o.get("contract_id")}
+
+
+@app.post("/v1/orders/{oid}/approve")
+def approve_order(oid: str, body: dict[str, Any],
+                  x_hv_session: str | None = Header(None)):
+    """Buyer authorization: bearer token + frozen terms hash + expiry, then
+    spend is reserved and the funded contract is created and offered.
+    Server-enforced; agents cannot self-approve."""
+    o = DB.get_order(oid)
+    if not o or o.get("token_hash") != sha256(body.get("token", "")):
+        raise HTTPException(404, "unknown order")
+    if o["status"] != "awaiting_buyer_approval":
+        raise HTTPException(409, "order already " + o["status"])
+    if body.get("terms_hash") != o["terms_hash"]:
+        raise HTTPException(409, "terms changed since draft — request a fresh order")
+    try:
+        exp = _dt.datetime.strptime(o["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=_dt.timezone.utc)
+    except Exception:
+        raise HTTPException(410, "order expired")
+    if _dt.datetime.now(_dt.timezone.utc) > exp:
+        o["status"] = "expired"
+        DB.save_order(o)
+        raise HTTPException(410, "order expired")
+    ag = {"agent_id": o["agent_id"], "principal_id": o["principal_id"],
+          "max_job_minor": o["budget"]["max_job_minor"],
+          "max_daily_minor": o["budget"]["max_daily_minor"]}
+    nid = SESS.narrator_for(x_hv_session or "") if x_hv_session else None
+    doc, funding, priced = _create_funded(ag, o["brief"])
+    now = utcnow_now()
+    o["status"] = "authorized"
+    o["approval"] = {"by": nid or "bearer-token-holder", "at": now,
+                     "terms_hash": o["terms_hash"], "version": 1}
+    o["contract_id"] = doc["contract_id"]
+    o["funding"] = funding
+    DB.save_order(o)
+    _ev(oid, "order.authorized", {"by": o["approval"]["by"],
+                                  "contract": doc["contract_id"]},
+        nid or "buyer", "narrator" if nid else "buyer")
+    return {"order_id": oid, "status": "authorized",
+            "contract_id": doc["contract_id"], "funding": funding,
+            "price": priced}

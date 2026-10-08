@@ -224,6 +224,18 @@ class Store:
         return [json.loads(r[0]) for r in rows
                 if json.loads(r[0]).get("owner_agent") == owner_agent]
 
+    def save_order(self, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO orders VALUES (?, ?)", (doc["order_id"], json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_order(self, oid: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM orders WHERE id=?", (oid,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+
     def save_narrator(self, doc: dict):
         conn = self._conn()
         conn.execute("INSERT OR REPLACE INTO narrators VALUES (?, ?)", (doc["id"], json.dumps(doc)))
