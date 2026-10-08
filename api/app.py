@@ -233,6 +233,21 @@ def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None))
             "note": "store the credential securely; processor fees borne by platform"}
 
 
+@app.post("/v1/voices/search")
+def voices_search(body: dict[str, Any]):
+    from hv import catalog as _cat
+    catalog = []
+    for n in DB.list_narrators():
+        catalog.append({"voice_id": f"hv_voice_{n['id']}", "handle": n.get("handle", ""),
+                        "languages": n.get("languages", []),
+                        "capabilities": {"declared": n.get("prefs", {}).get("categories", []),
+                                         "demonstrated": []},
+                        "availability": {"accepting_offers": True, "max_minutes_per_job": 60},
+                        "match_features": n.get("match_features", {}),
+                        "reliability": n.get("reliability")})
+    return {"matches": _cat.search(catalog, body, body.get("limit", 5))}
+
+
 @app.get("/v1/voices/by-handle/{handle}")
 def by_handle(handle: str):
     for n in DB.list_narrators():
