@@ -1,25 +1,26 @@
-"""Pricing tests: LIBRARY.md §5 curve, checkout floor, payout share."""
+"""Pricing tests: fitted curve, checkout floor, payout share."""
 import sys
 sys.path.insert(0, ".")
 
 from hv import pricing as P
 
 
-def test_curve_table():
-    assert P.curve(0.25) == 1.25
-    assert P.curve(1) == 2.0
-    assert P.curve(5) == 6.0
-    assert P.curve(10) == 11.0
-    assert P.curve(20) == 18.5
-    assert P.curve(30) == 26.0
-    assert P.curve(60) == 41.0
+def test_fitted_curve_table():
+    assert P.curve(10 / 60) == 2.0
+    assert P.curve(0.25) == 2.15
+    assert P.curve(1) == 3.19
+    assert P.curve(5) == 6.71
+    assert P.curve(10) == 10.0
+    assert P.curve(20) == 15.38
+    assert P.curve(30) == 20.0
+    assert P.curve(60) == 31.74
 
 
 def test_checkout_floor_and_batch():
     assert P.quote(0.25)["customer_price"] == 3.50
-    assert P.quote(0.25, batched=True)["customer_price"] == 1.25
-    assert P.quote(10) == {"customer_price": 11.0, "narrator_payout": 8.25,
-                           "tier": "standard", "batched": False}
+    assert P.quote(0.25, batched=True)["customer_price"] == 2.15
+    q = P.quote(10)
+    assert q["customer_price"] == 10.0 and q["narrator_payout"] == 7.5
 
 
 def test_duration_from_words():

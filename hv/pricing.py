@@ -21,8 +21,22 @@ TIERS = {"standard": 1.0, "proven": 1.3, "specialist": 1.8, "priority": 1.5}
 
 
 def curve(t_minutes: float) -> float:
+    """Fitted curve P(t) = 1.50 + 1.67*t^0.71 (t in minutes).
+    Targets: 10s→$2, 10min→$10, 30min→$20. See QUALITY.md."""
     t = max(0.0, t_minutes)
-    return BASE + min(t, 10) + 0.75 * max(0.0, min(t, 30) - 10) + 0.50 * max(0.0, t - 30)
+    return round(1.5362 + 1.6503 * (t ** 0.71), 2)
+
+
+HEAT_TIERS = {"new": 1.0, "verified": 1.0, "proven": 1.15, "specialist": 1.3}
+
+
+def heatmap(t_minutes: float, tier: str = "new") -> dict:
+    """Automatic price band: base × tier multiplier, quoted {low, base, high}."""
+    base = curve(t_minutes)
+    mult = HEAT_TIERS.get(tier, 1.0)
+    mid = round(base * mult, 2)
+    return {"low": round(mid * 0.95, 2), "base": mid, "high": round(mid * 1.05, 2),
+            "tier": tier, "tier_mult": mult}
 
 
 def quote(t_minutes: float, tier: str = "standard", batched: bool = False) -> dict:
