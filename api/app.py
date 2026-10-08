@@ -262,6 +262,30 @@ def voices(style: str = "", language: str = ""):
     return {"voices": out}
 
 
+@app.get("/v1/payments/methods")
+def pay_methods():
+    from hv.payments import service as _s, adapters as _a
+    svc = _s.PaymentService(None)
+    for ad in (_a.StellarEscrow(), _a.X402Base(), _a.StripeConnect(), _a.Simulated()):
+        svc.register(ad)
+    return {"rails": svc.methods()}
+
+
+@app.post("/v1/payments/quote")
+def pay_quote(body: dict[str, Any]):
+    from hv.payments import service as _s, adapters as _a
+    svc = _s.PaymentService(None)
+    for ad in (_a.StellarEscrow(), _a.X402Base(), _a.StripeConnect(), _a.Simulated()):
+        svc.register(ad)
+    return svc.quote({"payout_usd": float(body.get("payout_usd", 0))}, body.get("rail", "simulated"))
+
+
+@app.get("/v1/demand/templates")
+def demand_templates():
+    from hv import demand as _d
+    return {"templates": _d.TEMPLATES, "onboarding": _d.onboarding_tasks()}
+
+
 @app.post("/v1/orders/guest")
 def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     """Guest checkout record: no buyer account; high-entropy order credential.
