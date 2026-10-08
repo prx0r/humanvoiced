@@ -29,6 +29,27 @@ RIGHTS_SUMMARY = ("Performer licenses the approved recording for the agreed "
                   "speech, dataset extraction or impersonation without a "
                   "separate explicit agreement.")
 
+# Default rights model: exclusive commercial buyout. One contract, one
+# buyer, exclusive rights to the DELIVERED recordings only. Rejected takes,
+# auditions, unrelated recordings and vocal identity are never included.
+# Rights take effect on successful payment (settled status).
+RIGHTS_BUYOUT = {
+    "model": "exclusive_commercial_buyout",
+    "exclusive": True,
+    "territory": "worldwide",
+    "duration": "perpetual",
+    "buyer_commercial_use": True,
+    "buyer_editing": True,
+    "buyer_sublicensing": True,
+    "performer_resale": False,
+    "platform_resale": False,
+    "portfolio_use": False,
+    "voice_cloning": False,
+    "ai_training": False,
+    "covers": "approved_deliverables_only",
+    "effective_after_payment": True,
+}
+
 # Launch policy v0.1 (TECH-SPEC §8.5): offer expiry window minutes.
 OFFER_EXPIRY_MINUTES = (5, 15)
 REVIEW_WINDOW_SECONDS = 86400

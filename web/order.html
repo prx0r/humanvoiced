@@ -29,6 +29,7 @@ async function boot(){
     `<div class="checkrow"><span>Review window</span><b>24h, then auto-accept unless disputed</b></div>`+
     `<div class="checkrow"><span>Voice cloning</span><b>Not included, ever</b></div>`+
     `<div class="checkrow"><span>AI training on your performance</span><b>Never — separate agreement required</b></div>`+
+    `<div class="checkrow"><span>Exclusivity</span><b>Yours only — performer and platform cannot resell these recordings</b></div>`+
     `<div class="checkrow"><span>Audio cleanup</span><b>Noise/level mastering included</b></div>`+
     `<div class="checkrow"><span>Script hash</span><b>${esc((t.script_sha256||'').slice(0,16))}…</b></div>`;
   $('total').textContent='$'+t.customer_price_usd;

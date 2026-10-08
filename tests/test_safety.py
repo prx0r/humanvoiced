@@ -120,3 +120,23 @@ def test_report_blocks_settlement_until_cleared(tmp_path):
                                            "contract_id": cid, "decision": "clear"})
     assert clr.status_code == 200
     assert c.post(f"/v1/contracts/{cid}/approve", json={}, headers=H).status_code == 200
+
+
+def test_exclusive_buyout_default(tmp_path):
+    c = _client(tmp_path)
+    H = {"X-HV-Agent-Key": "k1"}
+    A.DB.save_narrator({"id": "nar_b1"})
+    r = _mk(c, H, "hello world " * 40, ["nar_b1"])
+    assert r.status_code == 200
+    doc = r.json()["contract"]
+    rights = doc["rights"]
+    assert rights["model"] == "exclusive_commercial_buyout"
+    assert rights["exclusive"] is True and rights["territory"] == "worldwide"
+    assert rights["performer_resale"] is False and rights["platform_resale"] is False
+    assert rights["portfolio_use"] is False and rights["ai_training"] is False
+    assert rights["covers"] == "approved_deliverables_only"
+    # order terms carry the model too
+    d = c.post("/v1/orders/draft", json={"script_text": "hello world " * 40,
+                                         "narrator_ids": ["nar_b1"]}, headers=H)
+    assert d.json()["quote"]["rights_model"] == "exclusive_commercial_buyout"
+    assert d.json()["quote"]["exclusive_to_buyer"] is True

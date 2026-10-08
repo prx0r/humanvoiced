@@ -773,7 +773,8 @@ def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple
     doc["rights"] = {"commercial_usage": doc.get("commercial_usage", "online_video"),
                      "voice_cloning": False, "ai_training": False,
                      "audio_cleanup": True,
-                     "statement": C.RIGHTS_SUMMARY}
+                     "statement": C.RIGHTS_SUMMARY,
+                     **{k: v for k, v in C.RIGHTS_BUYOUT.items()}}
     doc["service_fee_usd"] = priced.get("service_fee_usd", 0.0)
     if brief.get("channel_id"):
         doc["channel_id"] = brief["channel_id"]
@@ -1055,6 +1056,7 @@ def receipt(cid: str, x_hv_session: str | None = Header(None),
     return {"contract_id": cid, "payout_usd": c.get("payout_usd"),
             "narrator": c.get("narrator_id"), "settlement": c.get("settlement"),
             "funding": DB.get_intent(cid), "chain_verified": ok, "chain": chain,
+            "rights": c.get("rights", {}), "rights_effective": True,
             "policy_version": POLICY_VERSION}
 
 
@@ -1701,7 +1703,9 @@ def _order_terms(brief: dict, priced: dict, script: str) -> dict:
             "voice_cloning_allowed": False,
             "ai_training_allowed": False,
             "audio_cleanup_allowed": True,
-            "rights_statement": C.RIGHTS_SUMMARY}
+            "rights_statement": C.RIGHTS_SUMMARY,
+            "rights_model": C.RIGHTS_BUYOUT["model"],
+            "exclusive_to_buyer": True}
 
 
 @app.post("/v1/orders/draft")
