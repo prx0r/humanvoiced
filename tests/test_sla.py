@@ -30,6 +30,5 @@ def test_grace_then_flag_never_auto_fault():
 
 
 def test_submitted_goes_qc():
-    assert sweep([_mk(9000)], {"hvc_x": True}) == [] or True
     c = _mk(9000)
     assert sweep([c], {c.contract_id: True})[0]["action"] == "in_qc"

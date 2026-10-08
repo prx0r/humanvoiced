@@ -39,5 +39,5 @@ def test_any_dispute_forces_human():
 
 def test_agent_recommendation_never_settles():
     rec = R.agent_recommendation([], {})
-    assert "may_settle" not in rec or True
+    assert rec["flags"] == [] and rec["route"] == R.TIER_AUTO
     assert rec["note"].startswith("advisory")

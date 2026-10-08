@@ -46,23 +46,27 @@ class EventLedger:
     def append(self, contract_id: str, event_type: str, payload: dict,
                actor: str = "platform", actor_type: str = "system") -> str:
         conn = self._conn()
-        event_id = uid("evt_")
-        now = utcnow()
-        payload_json = json.dumps(payload, sort_keys=True)
-        row = conn.execute(
-            "SELECT event_sha256 FROM contract_events WHERE contract_id=? ORDER BY seq DESC LIMIT 1",
-            (contract_id,)).fetchone()
-        prev_hash = row[0] if row else ""
-        event_hash = sha256(f"{event_id}:{contract_id}:{event_type}:{payload_json}:{now}:{prev_hash}")
-        conn.execute(
-            """INSERT INTO contract_events
-               (event_id, contract_id, event_type, actor, actor_type, payload,
-                payload_sha256, recorded_at, prev_sha256, event_sha256)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (event_id, contract_id, event_type, actor, actor_type, payload_json,
-             sha256(payload_json), now, prev_hash, event_hash))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            event_id = uid("evt_")
+            now = utcnow()
+            payload_json = json.dumps(payload, sort_keys=True)
+            row = conn.execute(
+                "SELECT event_sha256 FROM contract_events WHERE contract_id=? ORDER BY seq DESC LIMIT 1",
+                (contract_id,)).fetchone()
+            prev_hash = row[0] if row else ""
+            event_hash = sha256(":".join([event_id, contract_id, event_type, actor,
+                                          actor_type, payload_json, now, prev_hash]))
+            conn.execute(
+                """INSERT INTO contract_events
+                   (event_id, contract_id, event_type, actor, actor_type, payload,
+                    payload_sha256, recorded_at, prev_sha256, event_sha256)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (event_id, contract_id, event_type, actor, actor_type, payload_json,
+                 sha256(payload_json), now, prev_hash, event_hash))
+            conn.commit()
+        finally:
+            conn.close()
         return event_id
 
     def get_events(self, contract_id: str) -> list[dict]:
@@ -88,8 +92,9 @@ class EventLedger:
             if e["prev_sha256"] != prev:
                 return False, f"link broken at {e['event_id']}"
             payload_json = json.dumps(e["payload"], sort_keys=True)
-            expect = sha256(f"{e['event_id']}:{contract_id}:{e['event_type']}"
-                            f":{payload_json}:{e['recorded_at']}:{e['prev_sha256']}")
+            expect = sha256(":".join([e["event_id"], contract_id, e["event_type"],
+                                      e["actor"], e["actor_type"], payload_json,
+                                      e["recorded_at"], e["prev_sha256"]]))
             if expect != e["event_sha256"]:
                 return False, f"hash mismatch at {e['event_id']}"
             prev = e["event_sha256"]
