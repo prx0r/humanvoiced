@@ -54,3 +54,12 @@ before spend), SERPAPI. OPENROUTER was wrong key — retired. R2 S3 sets dead
 4. Trustless Work testnet → real escrow.
 5. R2 S3 keys → object upload off disk.
 6. Next.js migration, PG deploy, Stripe-test wiring.
+
+## 2026-10-08 late session (onboarding incident)
+
+Owner recorded + authed and landed back on a dead page: recording lost
+(navigation wiped memory), no signed-in state shown. Root causes fixed:
+login-first step order, `?login=ok` banner, `GET /v1/narrators/me` session
+endpoint, cookie already spanned `.humanvoiced.com`. Lesson for next agent:
+any cross-navigation flow must persist artifacts (server draft or storage)
+and render auth state on load — never trust in-memory JS across OAuth.
