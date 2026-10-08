@@ -276,6 +276,34 @@ def my_profile_get(x_hv_session: str | None = Header(None)):
             "published": bool(doc.get("profile_published"))}
 
 
+@app.get("/v1/narrators/me/jobs")
+def my_jobs(x_hv_session: str | None = Header(None)):
+    """Talent home: offers to review, active jobs to record, recent payouts.
+    No contract IDs typed by hand; everything actionable is linked."""
+    from hv import pace as _pace
+    nid = _narrator(x_hv_session)
+    doc = DB.get_narrator(nid) or {"id": nid}
+    offers = []
+    for cid in DB.list_offers(nid):
+        c = DB.get_contract(cid)
+        if c and c.get("status") in ("offered", "proposed"):
+            offers.append({"contract_id": cid, "payout_usd": c.get("payout_usd"),
+                           "delivery_seconds": c.get("delivery_seconds"),
+                           "deadline_at": c.get("deadline_at", "")})
+    active, recent = [], []
+    for c in DB.contracts_for_narrator(nid):
+        row = {"contract_id": c["contract_id"], "payout_usd": c.get("payout_usd"),
+               "status": c.get("status"), "deadline_at": c.get("deadline_at", ""),
+               "settlement": c.get("settlement")}
+        (active if c.get("status") in ("accepted", "in_correction", "submitted")
+         else recent).append(row)
+    recent = sorted(recent, key=lambda r: r["contract_id"], reverse=True)[:10]
+    return {"offers": offers, "active": active, "recent": recent,
+            "pace_wpm": _pace.narrator_wpm(doc),
+            "published": bool(doc.get("profile_published")),
+            "handle": doc.get("handle", "")}
+
+
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import profile_draft as _pd
@@ -378,6 +406,9 @@ async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
                                           "analysis": _analyze_sample(body, tx)})
     if language not in doc.get("languages", []):
         doc["languages"] = doc.get("languages", []) + [language]
+    from hv import pace as _pace
+    _pace.record_sample(doc, len(tx.get("text", "").split()),
+                        receipt.get("frames", 0) / max(1, receipt.get("sample_rate", 48000)))
     DB.save_narrator(doc)
     _ev(nid, "sample.recorded", {"sha256": receipt["sha256"], "language": language,
                                  "provider": tx.get("provider")}, nid, "narrator")
@@ -1308,11 +1339,17 @@ def _can_read(cid: str, nid: str | None, aid: str | None) -> dict:
 @app.get("/v1/contracts/{cid}/segments")
 def get_segments(cid: str, x_hv_session: str | None = Header(None),
                  x_hv_agent_key: str | None = Header(None)):
+    from hv import pace as _pace
     nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
     c = _can_read(cid, nid, aid)
     if not c:
         raise HTTPException(404, "unknown contract")
-    return {"manifest": c.get("segment_manifest"), "state": c.get("segments_state")}
+    wpm = _pace.narrator_wpm(DB.get_narrator(nid) or {}) if nid else _pace.DEFAULT_WPM
+    segs = []
+    for s in (c.get("segment_manifest") or {}).get("segments", []):
+        segs.append({**s, "read": _pace.feasibility(s, wpm)})
+    return {"manifest": c.get("segment_manifest"), "state": c.get("segments_state"),
+            "passages": segs, "pace_wpm": wpm}
 
 
 @app.post("/v1/contracts/{cid}/segments/{seg}/takes")

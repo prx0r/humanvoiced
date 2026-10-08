@@ -1,0 +1,58 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home — HumanVoiced</title><link rel="stylesheet" href="hv.css"><link rel="icon" href="favicon.png?v=2" type="image/png"></head><body>
+<header class="topbar"><div class="shell nav"><a class="brand" href="home.html"><img class="brandmark" src="logo.png" alt="HumanVoiced logo" width="33" height="33">humanvoiced<span style="color:#16734e">.</span></a><nav class="navlinks"><a class="active" href="home.html">Home</a><a href="workspace.html">Studio</a><a href="portfolio.html?demo=1">My voice</a><a href="brief.html">How jobs work</a></nav><div class="navright"><span class="navpill" id="user-label">Not signed in</span></div></div></header>
+<main class="shell"><div class="hero"><div class="eyebrow">Your studio</div><h1 class="heading" id="hello">Welcome.</h1><p class="lede" id="hello-sub">Sign in to see your offers and jobs.</p></div>
+<div class="layout"><section class="stack">
+<div class="card cardpad hidden" id="offer-card"><div class="eyebrow">Current offer</div><h2 class="subheading" id="offer-title" style="margin:9px 0"></h2><p class="lede" id="offer-meta"></p><div class="row"><button class="btn" id="offer-accept">Accept →</button><button class="btn secondary" id="offer-decline">Decline</button><span class="small muted">No penalty for declining.</span></div></div>
+<div class="card cardpad"><div class="eyebrow">Recording</div><h2 class="subheading" style="margin:9px 0">Active jobs</h2><div id="active"><div class="placeholder">Nothing recording right now.</div></div></div>
+<div class="card cardpad"><div class="eyebrow">Earnings</div><h2 class="subheading" style="margin:9px 0">Recent work</h2><div id="recent"><div class="placeholder">No completed jobs yet.</div></div></div>
+</section><aside class="sidebar"><div class="card cardpad"><div class="eyebrow">My voice</div><h2 class="subheading" id="voice-name" style="margin:9px 0">—</h2><p class="small muted" id="voice-meta"></p><div class="row" style="margin-top:10px"><a class="btn secondary wide" id="voice-link" href="onboard.html">Open Voice Studio →</a></div></div><div class="note" id="pace-note">Pace calibration appears after your first samples.</div></aside></div></main>
+<footer class="footer"><div class="shell row between"><span>humanvoiced · Run by a human, with the help of AI.</span><span>Real voices. Real work.</span></div></footer>
+<script>
+(() => {
+'use strict';
+const API='https://api.humanvoiced.com';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+async function req(p,o={}){const r=await fetch(API+p,{...o,credentials:'include'});if(!r.ok)throw new Error(await r.text());return r.json();}
+function money(u){return '$'+Number(u||0).toFixed(2);}
+async function boot(){
+  let me=null;
+  try{ me=await req('/api/auth/me'); }catch{ $('hello-sub').innerHTML='Please <a href="onboard.html">sign in with Google</a> to see your studio.'; return; }
+  $('user-label').textContent=me.email||me.narrator_id;
+  const [jobs, prof]=await Promise.all([req('/v1/narrators/me/jobs'), req('/v1/narrators/me').catch(()=>({}))]);
+  const name=(prof.handle?'@'+prof.handle:(me.name||me.email||'Narrator'));
+  $('hello').textContent='Welcome'+(me.name?', '+me.name:'')+'.';
+  $('hello-sub').textContent=jobs.offers.length?'You have an offer waiting.':(jobs.active.length?'Back to work — a job is waiting.':'No jobs right now. Your voice is ready when work arrives.');
+  if(jobs.offers.length){
+    const o=jobs.offers[0];
+    $('offer-card').classList.remove('hidden');
+    $('offer-title').textContent=`Narration job · ${money(o.payout_usd)} · #${esc(o.contract_id)}`;
+    $('offer-meta').textContent=`Deadline ${o.deadline_at||'set on accept'} · paid on approval. Declining costs nothing.`;
+    $('offer-accept').onclick=async()=>{ await req(`/v1/offers/${o.contract_id}/accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); location.href='workspace.html?cid='+encodeURIComponent(o.contract_id); };
+    $('offer-decline').onclick=async()=>{ await req(`/v1/offers/${o.contract_id}/decline`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); location.reload(); };
+  }
+  if(jobs.active.length){
+    $('active').replaceChildren();
+    for(const j of jobs.active){
+      const d=document.createElement('div'); d.className='passage';
+      d.innerHTML=`<div class="row between"><b>#${esc(j.contract_id)}</b><span class="tag green">${esc(j.status)}</span></div><p class="small muted">Payout ${money(j.payout_usd)} · due ${esc(j.deadline_at||'—')}</p>`;
+      const a=document.createElement('a'); a.className='btn secondary'; a.href='workspace.html?cid='+encodeURIComponent(j.contract_id); a.textContent='Resume recording →'; d.append(a);
+      $('active').append(d);
+    }
+  }
+  if(jobs.recent.length){
+    $('recent').replaceChildren();
+    for(const j of jobs.recent){
+      const d=document.createElement('div'); d.className='minirow';
+      const s=document.createElement('span'); s.textContent=`#${j.contract_id} · ${j.status} · ${money((j.settlement||{}).amount_minor/100||j.payout_usd)}`;
+      d.append(s); $('recent').append(d);
+    }
+  }
+  $('voice-name').textContent=name;
+  $('voice-meta').textContent=`${prof.samples||0} sample(s)`+(jobs.pace_wpm?` · reads ~${jobs.pace_wpm} WPM`:'')+(jobs.published?' · published ✓':' · not published yet');
+  if(prof.handle){ $('voice-link').href='portfolio.html?h='+encodeURIComponent(prof.handle); $('voice-link').textContent='View my portfolio →'; }
+  if(jobs.pace_wpm) $('pace-note').textContent=`You read at ~${jobs.pace_wpm} WPM. Tight passages are judged against your pace, not a fixed number.`;
+}
+boot();
+})();
+</script></body></html>

@@ -1,34 +1,35 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recording workspace — HumanVoiced</title><link rel="icon" href="favicon.png?v=2" type="image/png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="hv.css"></head><body>
-<header class="topbar"><div class="shell nav"><a class="brand" href="onboard.html"><img class="brandmark" src="logo.png" alt="HumanVoiced logo" width="33" height="33">humanvoiced<span style="color:#16734e">.</span></a><nav class="navlinks"><a href="onboard.html">Voice Studio</a><a href="portfolio.html?demo=1">Browse portfolios</a><a href="brief.html">How jobs work</a></nav><div class="navright"><span class="navpill" id="user-label">Not signed in</span></div></div></header>
-<main class="shell"><div class="hero"><div class="eyebrow">Recording workspace / Paid job</div><h1 class="heading">Read it. Submit it. Get paid.</h1><p class="lede">Your script, large text. Nothing uploads until you approve the take.</p></div>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recording Studio — HumanVoiced</title><link rel="stylesheet" href="hv.css"><link rel="icon" href="favicon.png?v=2" type="image/png"></head><body>
+<header class="topbar"><div class="shell nav"><a class="brand" href="home.html"><img class="brandmark" src="logo.png" alt="HumanVoiced logo" width="33" height="33">humanvoiced<span style="color:#16734e">.</span></a><nav class="navlinks"><a href="home.html">Home</a><a class="active" href="workspace.html">Studio</a><a href="portfolio.html?demo=1">My voice</a><a href="brief.html">How jobs work</a></nav><div class="navright"><span class="navpill" id="user-label">Not signed in</span></div></div></header>
+<main class="shell"><div class="hero"><div class="row between" style="flex-wrap:wrap"><div><div class="eyebrow">Recording Studio</div><h1 class="heading" id="job-title" style="margin-bottom:4px">Your reading.</h1><p class="lede" id="job-meta">Loading your job…</p></div><span class="tag green" id="job-pay"></span></div>
+<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px"><input id="cid" placeholder="hvc_… (only if nothing loaded)" style="flex:1;min-width:200px"><button class="btn secondary small" id="load">Load</button></div></div>
 <div class="layout"><section class="stack">
-<div class="card cardpad"><div class="stephead"><span class="checkstep">01</span><div><h2>Your job</h2><p class="small muted" id="job-meta" style="margin:0">Paste a contract ID or open with ?cid=.</p></div></div>
-<div class="row" style="gap:8px;flex-wrap:wrap"><input id="cid" placeholder="hvc_…" style="flex:1;min-width:200px"><button class="btn secondary" id="load">Load script</button></div></div>
-<div class="card cardpad"><div class="stephead"><span class="checkstep">02</span><div><h2>Script</h2><p class="small muted" id="direction" style="margin:0"></p></div></div>
-<div class="script" id="script" style="font-size:19px">No script loaded yet.</div></div>
-<div class="card cardpad hidden" id="passage-card"><div class="stephead"><span class="checkstep">02b</span><div><h2>Passages — redo one, not everything</h2><p class="small muted" style="margin:0">One passage at a time. Retakes never touch accepted ones.</p></div></div>
-<div id="passages"></div>
-<div class="row" style="margin-top:12px"><button class="btn secondary" id="assemble">Assemble accepted takes →</button></div>
-<div class="note hidden" id="assemble-result" style="margin-top:12px"></div></div>
-<div class="card cardpad"><div class="stephead"><span class="checkstep">03</span><div><h2>Record</h2><p class="small muted" style="margin:0">Pause anytime. The meter is discreet — advice waits until after the take.</p></div></div>
-<div class="wavebox"><canvas id="wave" width="600" height="110" aria-label="Live waveform"></canvas></div>
-<div class="row between" style="flex-wrap:wrap"><div class="recordcontrols"><button class="btn" id="rec">● Record</button><button class="btn secondary" id="pause" disabled>Pause</button><button class="btn secondary" id="stop" disabled>Stop</button></div><div class="status"><span class="recpill" id="rec-live">● REC</span><span id="record-clock">Ready</span><span class="dbfs" id="dbfs-live">— dBFS</span></div></div>
+<div class="card cardpad" id="reader"><div class="row between"><span class="eyebrow" id="passage-pos">Passage</span><span class="tag" id="passage-feas">—</span></div>
+<div class="script" id="script" style="font-size:21px;margin-top:12px">Loading…</div>
+<p class="small muted" id="direction" style="margin:10px 0 0"></p>
+<p class="small muted" id="passage-sub" style="margin:4px 0 0"></p>
+<div class="row between" style="margin-top:14px"><button class="btn secondary" id="prev">← Previous</button><button class="btn secondary" id="next">Next →</button></div></div>
+<div class="card cardpad"><div class="stephead"><span class="checkstep">●</span><div><h2>Recorder</h2><p class="small muted" style="margin:0">One recorder for every passage. Takes stay on this device until saved.</p></div></div>
+<div class="wavebox" style="margin-top:12px"><canvas id="wave" width="600" height="110" aria-label="Live waveform"></canvas></div>
+<div class="row between" style="flex-wrap:wrap;margin-top:10px"><div class="recordcontrols"><button class="btn" id="rec">● Record</button><button class="btn secondary" id="pause" disabled>Pause</button><button class="btn secondary" id="stop" disabled>Stop</button></div><div class="status"><span class="recpill" id="rec-live">● REC</span><span id="record-clock">Ready</span><span class="dbfs" id="dbfs-live">— dBFS</span></div></div>
 <audio id="playback" controls class="hidden" style="width:100%;margin:8px 0"></audio>
-<div class="note" id="take-hint">Takes stay on this device until you submit.</div>
-<div class="row" style="margin-top:12px"><button class="btn" id="submit" disabled>Submit this take →</button></div>
-<div class="note hidden" id="submit-result" style="margin-top:12px"></div></div>
-</section><aside class="sidebar"><div class="card cardpad"><div class="eyebrow">Checklist</div><div class="minilist"><div class="minirow"><span class="circle" id="k-script">1</span>Script loaded</div><div class="minirow"><span class="circle" id="k-take">2</span>Take approved</div><div class="minirow"><span class="circle" id="k-sent">3</span>Submitted</div></div><div class="rule"></div><p class="small muted">Corrections come back here as new instructions — never silent overwrites. Payment releases on approval.</p></div></aside></div></main>
+<div class="row hidden" id="take-actions" style="gap:8px"><button class="btn" id="save-take">Save as take →</button><button class="btn secondary" id="discard-take">Discard</button></div>
+<div class="note" id="take-hint" style="margin-top:10px">Read the passage above, then stop.</div>
+<div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="submit">Submit whole file instead</button><button class="btn secondary" id="assemble">Assemble accepted takes →</button></div>
+<div class="note hidden" id="submit-result" style="margin-top:12px"></div>
+<div class="note hidden" id="assemble-result" style="margin-top:12px"></div></div>
+</section><aside class="sidebar"><div class="card cardpad"><div class="eyebrow">Passages</div><div class="minilist" id="passage-list" style="margin-top:10px"></div><div class="rule"></div><div class="small muted" id="pace-note">Pace calibration loads with your job.</div></div><div class="card cardpad"><div class="eyebrow">After you submit</div><p class="small muted">The buyer reviews, requests a passage retake if needed, and payment releases on approval. Declined offers never count against you.</p></div></aside></div></main>
 <footer class="footer"><div class="shell row between"><span>humanvoiced · Run by a human, with the help of AI.</span><span>Real voices. Real work.</span></div></footer>
 <script>
 (() => {
 'use strict';
 const API='https://api.humanvoiced.com';
 const $=id=>document.getElementById(id);
-const tick=(id,ok)=>{$(id).textContent=ok?'✓':id.slice(2);$(id).style.background=ok?'#e1f5e7':'';};
-let wavBlob=null,wavUrl='',stream=null,ctx=null,analyser=null,frameId=0,recorder=null,chunks=[],paused=false,started=0,cid='';
+const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+let cid='', segs=[], segState={}, idx=0, paceWpm=150;
+let wavBlob=null,wavUrl='',stream=null,ctx=null,analyser=null,frameId=0,recorder=null,chunks=[],paused=false,started=0,clockTimer=null;
 const hist=new Array(200).fill(0);
+async function req(p,o={}){const r=await fetch(API+p,{...o,credentials:'include'});if(!r.ok)throw new Error(await r.text());return r.json();}
+function wavEncode(buf){const n=buf.length,sr=buf.sampleRate,ch=buf.numberOfChannels;const b=new ArrayBuffer(44+n*2),dv=new DataView(b);const s=(a,t)=>{for(let i=0;i<t.length;i++)dv.setUint8(a+i,t.charCodeAt(i));};s(0,'RIFF');dv.setUint32(4,36+n*2,true);s(8,'WAVE');s(12,'fmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);s(36,'data');dv.setUint32(40,n*2,true);const chs=Array.from({length:ch},(_,i)=>buf.getChannelData(i));for(let i=0;i<n;i++){let v=0;for(const c of chs)v+=c[i];v=Math.max(-1,Math.min(1,v/ch));dv.setInt16(44+i*2,v<0?v*32768:v*32767,true);}return new Blob([b],{type:'audio/wav'});}
 function draw(){ if(!analyser)return; const td=new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(td);
   let e=0,pk=0; for(const v of td){e+=v*v;const a=Math.abs(v);if(a>pk)pk=a;}
   hist.push(Math.min(1,pk)); hist.shift();
@@ -37,63 +38,66 @@ function draw(){ if(!analyser)return; const td=new Float32Array(analyser.fftSize
   hist.forEach((p,i)=>{const x=i/(hist.length-1)*W,y=H/2-p*(H/2-3);i?g.lineTo(x,y):g.moveTo(x,y);});g.stroke();
   $('dbfs-live').textContent=(pk<=0.00001?-96:Math.max(-96,Math.round(20*Math.log10(Math.sqrt(e/td.length))*10)/10))+' dBFS';
   frameId=requestAnimationFrame(draw); }
-function cleanup(stopRec){ if(recorder&&recorder.state!=='inactive'&&stopRec){try{recorder.stop();}catch{}} if(stream)stream.getTracks().forEach(t=>t.stop()); stream=null;analyser=null; if(frameId)cancelAnimationFrame(frameId); if(ctx)ctx.close().catch(()=>{});ctx=null; $('rec-live').classList.remove('on'); $('rec').disabled=false; $('pause').disabled=true; $('stop').disabled=true; }
-function wavEncode(buf){const n=buf.length,sr=buf.sampleRate,ch=buf.numberOfChannels;const b=new ArrayBuffer(44+n*2),dv=new DataView(b);const s=(a,t)=>{for(let i=0;i<t.length;i++)dv.setUint8(a+i,t.charCodeAt(i));};s(0,'RIFF');dv.setUint32(4,36+n*2,true);s(8,'WAVE');s(12,'fmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);s(36,'data');dv.setUint32(40,n*2,true);const chs=Array.from({length:ch},(_,i)=>buf.getChannelData(i));for(let i=0;i<n;i++){let v=0;for(const c of chs)v+=c[i];v=Math.max(-1,Math.min(1,v/ch));dv.setInt16(44+i*2,v<0?v*32768:v*32767,true);}return new Blob([b],{type:'audio/wav'});}
-async function req(p,o={}){const r=await fetch(API+p,{...o,credentials:'include'});if(!r.ok)throw new Error(await r.text());return r.json();}
-async function boot(){ const q=new URLSearchParams(location.search).get('cid'); if(q){$('cid').value=q;load();} try{const me=await req('/api/auth/me');$('user-label').textContent=me.email||me.narrator_id||'Signed in';}catch{$('user-label').textContent='Not signed in';} }
-async function load(){ cid=$('cid').value.trim(); if(!cid)return; try{ const c=await req('/v1/contracts/'+encodeURIComponent(cid));
-    let text='';
-    try{ const s=await req('/v1/contracts/'+encodeURIComponent(cid)+'/script'); text=s.script_text||''; }catch{}
-    $('script').textContent=text||'(script text unavailable — contact support)';
-    $('job-meta').textContent=`Payout $${c.payout_usd} · status ${c.status} · deadline ${c.deadline_at||'—'}`;
-    $('direction').textContent='Direction: conversational. One correction round included.';
-    tick('k-script',true); }catch(e){ $('job-meta').textContent='Could not load: '+e.message; } }
-$('load').onclick=load;
+function cleanup(stopRec){ if(recorder&&recorder.state!=='inactive'&&stopRec){try{recorder.stop();}catch{}} if(stream)stream.getTracks().forEach(t=>t.stop()); stream=null;analyser=null; if(frameId)cancelAnimationFrame(frameId); if(ctx)ctx.close().catch(()=>{});ctx=null; clearInterval(clockTimer); $('rec-live').classList.remove('on'); $('rec').disabled=false; $('pause').disabled=true; $('stop').disabled=true; }
+function render(){
+  if(!segs.length){ $('script').textContent='No passages in this job yet.'; return; }
+  idx=Math.max(0,Math.min(segs.length-1,idx));
+  const s=segs[idx], st=segState[s.id]||{takes:[]}, read=s.read||{};
+  $('passage-pos').textContent=`Passage ${idx+1} of ${segs.length} · ${s.id}`;
+  const feas=$('passage-feas');
+  feas.textContent={comfortable:'✓ Comfortable',tight:'~ Tight',impractical:'! Impractical'}[read.status]||read.status||'—';
+  feas.className='tag '+({comfortable:'green',tight:'gold',impractical:''}[read.status]||'');
+  $('script').textContent=s.script;
+  $('direction').textContent=(s.direction?'Direction — '+s.direction:'')+(s.video_reference?` · 🎬 reference: ${s.video_reference}`:'');
+  $('passage-sub').textContent=`${read.words||''} words · ~${read.est_seconds||'?'}s at your pace${read.required_wpm?` · needs ${read.required_wpm} WPM`:''}${st.accepted?' · accepted ✓':(st.takes&&st.takes.length?` · ${st.takes.length} take(s)`:'')}${st.needs_retake?' · retake requested: '+(st.retake_note||''):''}`;
+  $('take-hint').textContent=st.needs_retake?('Retake requested — '+(st.retake_note||'read it fresh.')):'Read the passage above, then stop.';
+  const box=$('passage-list'); box.replaceChildren();
+  segs.forEach((g,i)=>{ const r=document.createElement('div'); r.className='minirow'; const dot=document.createElement('span'); dot.className='circle'; dot.id=''; dot.textContent=((segState[g.id]||{}).accepted?'✓':(i+1)); if(i===idx)dot.style.background='#166d4b',dot.style.color='#fff'; const t=document.createElement('span'); t.textContent=(g.script||'').slice(0,42)+'…'; t.style.cursor='pointer'; t.onclick=()=>{idx=i;render();}; r.append(dot,t); box.append(r); });
+}
+async function refreshState(){ try{ const s=await req('/v1/contracts/'+encodeURIComponent(cid)+'/segments'); segs=s.passages||[]; segState=s.state||{}; paceWpm=s.pace_wpm||150; $('pace-note').textContent=`You read at ~${paceWpm} WPM. Tight passages are judged against your pace.`; render(); }catch(e){ $('job-meta').textContent='Could not load passages: '+e.message; } }
+async function load(id){ cid=id; $('cid').value=id;
+  try{ const c=await req('/v1/contracts/'+encodeURIComponent(cid));
+    $('job-title').textContent='Contract '+cid;
+    $('job-meta').textContent=`Payout $${c.payout_usd} · ${c.status} · due ${c.deadline_at||'on accept'}`;
+    $('job-pay').textContent='$'+c.payout_usd;
+    try{ const s=await req('/v1/contracts/'+encodeURIComponent(cid)+'/script'); if(s.script_text&&!segs.length){} }catch{}
+    await refreshState();
+  }catch(e){ $('job-meta').textContent='Could not load job: '+e.message; } }
+$('load').onclick=()=>{ if($('cid').value.trim()) load($('cid').value.trim()); };
+$('prev').onclick=()=>{ idx--; render(); };
+$('next').onclick=()=>{ idx++; render(); };
 $('rec').onclick=async()=>{ try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); ctx=new(window.AudioContext||window.webkitAudioContext)(); analyser=ctx.createAnalyser(); analyser.fftSize=2048; ctx.createMediaStreamSource(stream).connect(analyser);
   const m=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(x=>MediaRecorder.isTypeSupported(x)); recorder=new MediaRecorder(stream,m?{mimeType:m}:undefined); chunks=[]; paused=false; $('pause').textContent='Pause';
   recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-  recorder.onstop=async()=>{ try{ const blob=new Blob(chunks,{type:recorder.mimeType}); const t=new(window.AudioContext||window.webkitAudioContext)(); const dec=await t.decodeAudioData(await blob.arrayBuffer()); await t.close(); wavBlob=wavEncode(dec); if(wavUrl)URL.revokeObjectURL(wavUrl); wavUrl=URL.createObjectURL(wavBlob); $('playback').src=wavUrl; $('playback').classList.remove('hidden'); $('submit').disabled=false; tick('k-take',true); $('take-hint').textContent='Take ready. Listen, then submit — or record again.'; }catch(e){ $('take-hint').textContent='Could not process: '+e.message; } };
+  recorder.onstop=async()=>{ try{ const blob=new Blob(chunks,{type:recorder.mimeType}); const t=new(window.AudioContext||window.webkitAudioContext)(); const dec=await t.decodeAudioData(await blob.arrayBuffer()); await t.close(); wavBlob=wavEncode(dec); if(wavUrl)URL.revokeObjectURL(wavUrl); wavUrl=URL.createObjectURL(wavBlob); $('playback').src=wavUrl; $('playback').classList.remove('hidden'); $('take-actions').classList.remove('hidden'); $('take-hint').textContent='Listen, then save as a take for this passage — or discard.'; }catch(e){ $('take-hint').textContent='Could not process: '+e.message; } };
   recorder.start(); started=Date.now(); $('rec').disabled=true; $('pause').disabled=false; $('stop').disabled=false; $('rec-live').classList.add('on'); draw();
-  setInterval(()=>{ if(recorder&&recorder.state!=='inactive') $('record-clock').textContent=`● REC · ${Math.floor((Date.now()-started)/1000)}s${paused?' (paused)':''}`; },250);
+  clockTimer=setInterval(()=>{ if(recorder&&recorder.state!=='inactive') $('record-clock').textContent=`● REC · ${Math.floor((Date.now()-started)/1000)}s${paused?' (paused)':''}`; },250);
   }catch(e){ $('take-hint').textContent='Microphone failed: '+e.message; } };
-$('pause').onclick=()=>{ if(!recorder)return; try{ if(paused){recorder.resume();paused=false;$('pause').textContent='Pause';} else if(recorder.pause){recorder.pause();paused=true;$('pause').textContent='Resume';} else {$('pause').disabled=true;$('take-hint').textContent='Pause unsupported here — stop and start a new take instead.';} }catch(e){ $('pause').disabled=true; } };
+$('pause').onclick=()=>{ if(!recorder)return; try{ if(paused){recorder.resume();paused=false;$('pause').textContent='Pause';} else if(recorder.pause){recorder.pause();paused=true;$('pause').textContent='Resume';} else {$('pause').disabled=true;} }catch(e){ $('pause').disabled=true; } };
 $('stop').onclick=()=>{ const mr=recorder; cleanup(false); if(mr&&mr.state!=='inactive')mr.stop(); };
-$('submit').onclick=async()=>{ if(!wavBlob||!cid){$('take-hint').textContent='Load a job and record a take first.';return;} $('submit').disabled=true;
+$('discard-take').onclick=()=>{ wavBlob=null; $('playback').classList.add('hidden'); $('take-actions').classList.add('hidden'); $('take-hint').textContent='Discarded. Read again when ready.'; };
+$('save-take').onclick=async()=>{ const s=segs[idx]; if(!wavBlob||!s)return;
+  try{ const r=await fetch(API+'/v1/contracts/'+encodeURIComponent(cid)+'/segments/'+encodeURIComponent(s.id)+'/takes',{method:'POST',headers:{'Content-Type':'audio/wav'},body:wavBlob,credentials:'include'}); const j=await r.json(); if(!r.ok)throw new Error(JSON.stringify(j));
+    const useIt=confirm(`Take ${j.attempt} saved. Use it as the accepted take for this passage?`);
+    if(useIt){ await req('/v1/contracts/'+encodeURIComponent(cid)+'/segments/'+encodeURIComponent(s.id)+'/accept',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sha256:j.sha256})}); }
+    $('take-actions').classList.add('hidden'); await refreshState();
+    const ni=segs.findIndex((g,i)=>i>idx&&!((segState[g.id]||{}).accepted)); if(ni>0){ idx=ni; render(); }
+  }catch(e){ $('take-hint').textContent='Save failed: '+e.message; } };
+$('submit').onclick=async()=>{ if(!wavBlob||!cid){$('take-hint').textContent='Load a job and record first.';return;}
   try{ const r=await fetch(API+'/v1/contracts/'+encodeURIComponent(cid)+'/submissions',{method:'POST',headers:{'Content-Type':'audio/wav'},body:wavBlob,credentials:'include'}); const j=await r.json(); if(!r.ok)throw new Error(JSON.stringify(j));
     const t=j.qc_technical||{}; const box=$('submit-result'); box.classList.remove('hidden');
-    box.textContent=`Submitted ✓ · file valid: ${t.file_valid} · clipping: ${!!t.clipping_detected} · silence ${(t.silence_ratio*100|0)}% — the buyer reviews next; payment releases on approval.`;
-    tick('k-sent',true); }catch(e){ $('take-hint').textContent='Submit failed: '+e.message; $('submit').disabled=false; } };
-async function passages(){ try{
-  const s=await req('/v1/contracts/'+encodeURIComponent(cid)+'/segments');
-  const mans=(s.manifest&&s.manifest.segments)||[], st=s.state||{};
-  if(!mans.length) return;
-  $('passage-card').classList.remove('hidden');
-  const box=$('passages'); box.replaceChildren();
-  mans.forEach((sg,idx)=>{
-    const cur=st[sg.id]||{takes:[],accepted:null};
-    const card=document.createElement('div'); card.className='passage'; card.id='psg-'+sg.id;
-    const win=sg.timing==='hard'?` · ⏱ ${sg.target_start_ms}–${sg.target_end_ms}ms hard`:` · ~${sg.target_start_ms}ms+ soft`;
-    card.innerHTML=`<div class="row between"><b>${idx+1}. ${sg.id}</b><span class="tag">${cur.accepted?'accepted ✓':(cur.takes.length?cur.takes.length+' take(s)':'not started')}${cur.needs_retake?' · retake requested':''}</span></div><p>${sg.script.replace(/</g,'&lt;')}</p><p class="small muted">${(sg.direction||'').replace(/</g,'&lt;')}${win}</p><p class="small muted">${(cur.retake_note||'').replace(/</g,'&lt;')}</p><div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn small secondary" data-act="rec">● Record</button><button class="btn small secondary hidden" data-act="stop">Stop</button><button class="btn small secondary" data-act="use" ${cur.takes.length?'':'disabled'}>Use latest take</button></div><div class="small muted" data-role="msg"></div>`;
-    const say=t=>{card.querySelector('[data-role=msg]').textContent=t;};
-    let ms=null,mr=null,chunks=[];
-    const btns=Object.fromEntries([...card.querySelectorAll('[data-act]')].map(b=>[b.dataset.act,b]));
-    btns.rec.onclick=async()=>{ try{ ms=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); const m=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(x=>MediaRecorder.isTypeSupported(x)); mr=new MediaRecorder(ms,m?{mimeType:m}:undefined); chunks=[]; mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-      mr.onstop=async()=>{ try{ const blob=new Blob(chunks,{type:mr.mimeType}); const t=new(window.AudioContext||window.webkitAudioContext)(); const dec=await t.decodeAudioData(await blob.arrayBuffer()); await t.close(); const w=wavEncode(dec);
-        const r=await fetch(API+'/v1/contracts/'+encodeURIComponent(cid)+'/segments/'+encodeURIComponent(sg.id)+'/takes',{method:'POST',headers:{'Content-Type':'audio/wav'},body:w,credentials:'include'}); const j=await r.json(); if(!r.ok)throw new Error(JSON.stringify(j));
-        say(`Take ${j.attempt} saved ✓ — press “Use latest take”.`); btns.use.disabled=false; }catch(e){ say('Take failed: '+e.message); } ms.getTracks().forEach(t=>t.stop()); };
-      mr.start(); btns.rec.classList.add('hidden'); btns.stop.classList.remove('hidden'); say('Recording passage… stop when done.'); }catch(e){ say('Mic failed: '+e.message); } };
-    btns.stop.onclick=()=>{ try{if(mr&&mr.state!=='inactive')mr.stop();}catch{} btns.stop.classList.add('hidden'); btns.rec.classList.remove('hidden'); };
-    btns.use.onclick=async()=>{ try{ const all=await req('/v1/contracts/'+encodeURIComponent(cid)+'/segments'); const takes=(all.state[sg.id]||{takes:[]}).takes; const last=takes[takes.length-1]; if(!last)return;
-      await req('/v1/contracts/'+encodeURIComponent(cid)+'/segments/'+encodeURIComponent(sg.id)+'/accept',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sha256:last.sha256})});
-      say('Accepted ✓'); passages(); }catch(e){ say('Accept failed: '+e.message); } };
-    box.append(card);
-  });
-  }catch(e){ /* single-take contracts simply skip passages */ } }
-const _load0=load; load=async()=>{ await _load0(); passages(); };
+    box.textContent=`Submitted ✓ · valid file: ${t.file_valid} · payment releases on approval.`; }catch(e){ $('take-hint').textContent='Submit failed: '+e.message; } };
 $('assemble').onclick=async()=>{ try{ const r=await req('/v1/contracts/'+encodeURIComponent(cid)+'/assemble',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
   const box=$('assemble-result'); box.classList.remove('hidden');
-  box.textContent=`Master assembled ✓ ${(r.total_ms/1000).toFixed(1)}s from ${r.edit_map.length} passages — submitted for review; payment releases on approval.`;
-  tick('k-sent',true); $('submit').disabled=true; }catch(e){ const box=$('assemble-result'); box.classList.remove('hidden'); box.textContent='Assemble needs attention: '+e.message; } };
+  box.textContent=`Master assembled ✓ ${(r.total_ms/1000).toFixed(1)}s from ${r.edit_map.length} passages — submitted for review.`; await refreshState(); }catch(e){ const box=$('assemble-result'); box.classList.remove('hidden'); box.textContent='Assemble needs attention: '+e.message; } };
+async function boot(){
+  try{ const me=await req('/api/auth/me'); $('user-label').textContent=me.email||me.narrator_id||'Signed in'; }catch{}
+  const q=new URLSearchParams(location.search).get('cid');
+  if(q){ load(q); return; }
+  try{ const jobs=await req('/v1/narrators/me/jobs'); const first=(jobs.active||[])[0];
+    if(first){ load(first.contract_id); return; } }catch{}
+  $('job-meta').textContent='No active job — paste a contract ID, or accept an offer on Home.';
+}
 boot();
 })();
 </script></body></html>

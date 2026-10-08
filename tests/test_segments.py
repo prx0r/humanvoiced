@@ -180,3 +180,40 @@ def test_assembly_deterministic():
     r2 = _as.assemble(segs, {"a": p1, "b": p2}, os.path.join(d, "m2.wav"))
     assert r1["master_sha256"] == r2["master_sha256"]
     assert r1["total_ms"] > 2000  # two 1s takes + breathing room
+
+
+def test_jobs_pace_feasibility(tmp_path):
+    from hv import pace as _pace
+    c = _client(tmp_path)
+    H = {"X-HV-Agent-Key": "k1"}
+    A.DB.save_narrator({"id": "nar_j1", "pace": {"wpm": 120.0, "samples": 4}})
+    r = c.post("/v1/contracts", json={"script_text": "hello world " * 40,
+                                      "narrator_ids": ["nar_j1"]}, headers=H)
+    cid = r.json()["contract"]["contract_id"]
+    tok = A.SESS.create("sj", "j@x", "nar_j1")
+    NH = {"X-HV-Session": tok}
+    jobs = c.get("/v1/narrators/me/jobs", headers=NH).json()
+    assert len(jobs["offers"]) == 1 and jobs["offers"][0]["contract_id"] == cid
+    assert jobs["pace_wpm"] == 120.0 and jobs["active"] == []
+    c.post(f"/v1/offers/{cid}/accept", json={}, headers=NH)
+    jobs2 = c.get("/v1/narrators/me/jobs", headers=NH).json()
+    assert jobs2["offers"] == [] and len(jobs2["active"]) == 1
+    # feasibility calibrated to the narrator's own 120 wpm, not 150
+    segs = c.get(f"/v1/contracts/{cid}/segments", headers=NH).json()
+    assert segs["pace_wpm"] == 120.0
+    assert all("read" in s and s["read"]["status"] in
+               ("comfortable", "tight", "impractical") for s in segs["passages"])
+    # tight + impractical labels at 120 wpm on a 10s hard window
+    assert _pace.feasibility({"script": "word " * 24, "timing": "hard",
+                              "target_start_ms": 0, "target_end_ms": 10000},
+                             120.0)["status"] == "tight"
+    assert _pace.feasibility({"script": "word " * 60, "timing": "hard",
+                              "target_start_ms": 0, "target_end_ms": 10000},
+                             120.0)["status"] == "impractical"
+    # pace EMA learns, junk ignored
+    doc = {"pace": {"wpm": 120.0, "samples": 4}}
+    _pace.record_sample(doc, 150, 60.0)
+    assert 120.0 < doc["pace"]["wpm"] < 150.0 and doc["pace"]["samples"] == 5
+    doc2 = {}
+    _pace.record_sample(doc2, 2, 1.0)
+    assert doc2.get("pace", {}) == {}

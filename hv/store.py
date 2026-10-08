@@ -87,6 +87,20 @@ class Store:
         conn.close()
         return row is not None
 
+    def list_offers(self, nid: str) -> list[str]:
+        conn = self._conn()
+        rows = conn.execute("SELECT contract_id FROM offers WHERE narrator_id=?", (nid,)).fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+
+    def contracts_for_narrator(self, nid: str) -> list[dict]:
+        import json as _j
+        conn = self._conn()
+        rows = conn.execute("SELECT doc FROM contracts").fetchall()
+        conn.close()
+        return [_j.loads(r[0]) for r in rows
+                if _j.loads(r[0]).get("narrator_id") == nid]
+
     def record_upload(self, sha: str, cid: str, nid: str, nbytes: int):
         conn = self._conn()
         conn.execute("INSERT OR IGNORE INTO uploads VALUES (?, ?, ?, ?, ?)", (sha, cid, nid, nbytes, time.time()))
