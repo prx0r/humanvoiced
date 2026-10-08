@@ -208,6 +208,16 @@ def transparency():
         elif kind == "expense":
             t.record_expense(amount / 100, "")
     return t.public()
+@app.get("/v1/narrators/me")
+def my_profile_get(x_hv_session: str | None = Header(None)):
+    nid = _narrator(x_hv_session)
+    doc = DB.get_narrator(nid) or {"id": nid}
+    return {"narrator_id": nid, "email": doc.get("email", ""),
+            "handle": doc.get("handle", ""),
+            "samples": len(doc.get("samples", [])),
+            "published": bool(doc.get("profile_published"))}
+
+
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import profile_draft as _pd

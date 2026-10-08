@@ -12,8 +12,14 @@ small{color:#666}
 <body>
 <h1>Become a voice</h1>
 
+<div class="step" id="s0">
+<h2>1 · Sign in with Google</h2>
+<p><button id="login">Sign in with Google</button> <span id="who"></span></p>
+<p><small>Sign in first — then your recording survives every step. No payment setup needed.</small></p>
+</div>
+
 <div class="step" id="s1">
-<h2>1 · Read this (~30 seconds)</h2>
+<h2>2 · Read this (~30 seconds)</h2>
 <div id="script"><p>Last Thursday morning, Alex walked into a little café beside
 the railway station. The rain had finally stopped, but the streets were
 still shining.</p>
@@ -31,13 +37,12 @@ what was going on, and that was the strange part.</p>
 </div>
 
 <div class="step" id="s2">
-<h2>2 · Sign in with Google</h2>
-<p><button id="login">Sign in with Google</button> <span id="who"></span></p>
-<p><small>Attaches the recording to your new account. No payment setup needed.</small></p>
+<h2>3 · Sign in confirmed</h2>
+<p id="signedstate">Checking…</p>
 </div>
 
 <div class="step" id="s3">
-<h2>3 · Review your AI profile, then publish</h2>
+<h2>4 · Review your AI profile, then publish</h2>
 <p><button id="draft">Generate my profile draft</button></p>
 <pre id="draftout" style="background:#f6f6f6;padding:1rem;white-space:pre-wrap"></pre>
 <p><button id="publish" disabled>Publish my portfolio</button> <span id="portlink"></span></p>
@@ -115,8 +120,26 @@ document.getElementById('rec').onclick = async () => {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     wavBlob = encodeWav(await ctx.decodeAudioData(await blob.arrayBuffer()));
     document.getElementById('play').src = URL.createObjectURL(wavBlob);
-    done('s1'); msg('Review it above. Then sign in.');
-  };
+  done('s1'); msg('Review it above. Then sign in.');
+};
+
+async function refreshSession() {
+  try {
+    const me = await fetch(API + '/v1/narrators/me', {credentials: 'include'}).then(r => r.ok ? r.json() : null);
+    if (me) {
+      document.getElementById('signedstate').textContent =
+        'Signed in as ' + (me.email || me.narrator_id) + ' · ' + me.samples + ' sample(s)' + (me.published ? ' · published ✓' : '');
+      document.getElementById('who').textContent = '✓ ' + (me.email || '');
+      return true;
+    }
+  } catch {}
+  document.getElementById('signedstate').textContent = 'Not signed in yet — use step 1.';
+  return false;
+}
+refreshSession();
+if (new URLSearchParams(location.search).get('login') === 'ok') {
+  msg('Signed in. Now record your sample below.');
+}
   mr.start();
   document.getElementById('rec').disabled = true;
   document.getElementById('stop').disabled = false;
