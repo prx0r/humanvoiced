@@ -1095,6 +1095,17 @@ def _transcribe_file(path: str, language: str = "en") -> dict:
                 "note": str(e)[:100]}
 
 
+def _run_mp3(wav_path: str, out_dir: str, stem: str) -> dict:
+    from hv import processing as _proc
+    mp3 = os.path.join(out_dir, stem + ".mp3")
+    p = _proc._run(["ffmpeg", "-hide_banner", "-y", "-i", wav_path,
+                    "-codec:a", "libmp3lame", "-b:a", "192k", mp3])
+    if p.returncode != 0:
+        raise _proc.ProcessingError("mp3 export failed: " + p.stderr[-300:])
+    return {stem + ".wav": wav_path, stem + ".mp3": mp3,
+            "measured": _proc.measure_loudness(wav_path)}
+
+
 @app.post("/v1/contracts/{cid}/pack")
 def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     """Assemble the delivery pack: original (immutable) + basic master/MP3/SRT,
@@ -1110,9 +1121,17 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
     if c.get("status") not in ("submitted", "settled"):
         raise HTTPException(409, "pack needs a submitted recording")
     tier = body.get("tier", "basic")
-    if tier not in ("basic", "studio"):
-        raise HTTPException(422, "tier must be basic or studio")
-    fee = P.processing_quote(tier)
+    if tier not in ("basic", "studio", "clean"):
+        raise HTTPException(422, "tier must be basic, studio or clean")
+    from hv import clean as _cl
+    if tier == "clean":
+        minutes = max(0.25, len((DB.get_script(c.get("script_sha256", "")) or "").split()) / 150.0)
+        fee = {"tier": "clean",
+               "processing_fee_usd": _cl.clean_quote_usd(minutes),
+               "narrator_payout_change_usd": 0.0,
+               "note": "VEED via fal.ai, passthrough usage cost billed separately"}
+    else:
+        fee = P.processing_quote(tier)
     preset = None
     if tier == "studio":
         if not ALLOW_SIMULATED:
@@ -1160,6 +1179,21 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
                                              tx.get("text", ""), stx.get("text", ""))
             if not integrity["passed"]:
                 c["pack_review"] = "manual_review"
+        if tier == "clean":
+            try:
+                prov = _cl.veed_clean(src, os.path.join(out_dir, "clean.wav"))
+            except _cl.ProviderUnavailable as e:
+                raise HTTPException(501, str(e))
+            cp = _run_mp3(os.path.join(out_dir, "clean.wav"), out_dir, "clean")
+            assets.update(cp)
+            assets["chain"] = (f"veed/clean-audio target_lufs={prov['target_lufs']},"
+                               "mp3-export")
+            assets["provider"] = prov
+            ctx = _transcribe_file(os.path.join(out_dir, "clean.wav"))
+            integrity = _proc.integrity_check(src, os.path.join(out_dir, "clean.wav"),
+                                              tx.get("text", ""), ctx.get("text", ""))
+            if not integrity["passed"]:
+                c["pack_review"] = "manual_review"
         manifest = _pk.build_manifest(c, sha, assets, tx.get("text", ""),
                                       segments, fee["processing_fee_usd"],
                                       tier, preset, integrity)
@@ -1171,12 +1205,14 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
             manifest["reference_id"] = ref_id
         # A preset is settings + versions: engine, full chain, match flag.
         _pset = assets.get("preset") or {}
+        _prov = assets.get("provider")
         manifest["processing"] = {
             "engine": _pset.get("engine") or _pr.ENGINE_VERSION,
             "chain": assets.get("chain", ""),
-            "preset_settings": _pset or {"tier": "basic"},
+            "preset_settings": _pset or {"tier": tier},
             "reference_matched": bool(assets.get("reference_matched")),
-            "denoise_backend": "afftdn",
+            "denoise_backend": "afftdn" if not _prov else _prov.get("model", ""),
+            "provider": _prov or {"provider": "local"},
         }
         if ref_id:
             manifest["reference_id"] = ref_id
@@ -1393,3 +1429,45 @@ def assemble(cid: str, body: dict[str, Any],
     DB.save_contract(c)
     return {"master": res["master_sha256"], "total_ms": res["total_ms"],
             "edit_map": res["edit_map"]}
+
+
+@app.post("/v1/contracts/{cid}/direct")
+def direct(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """AI sound director: passage-level performance notes + production
+    advice. Recommendations only — verify against ASR alignment and the
+    original audio before any retake request or payment decision."""
+    from hv import director as _dr
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "only the contracting agent directs")
+    if c.get("status") not in ("submitted", "settled"):
+        raise HTTPException(409, "nothing to review yet")
+    script = DB.get_script(c.get("script_sha256", "")) or ""
+    sub = c.get("last_submission") or {}
+    sha = sub.get("sha256", "")
+    from pathlib import Path as _P
+    src = str(_P(UPL.RAW_DIR, sha + ".wav"))
+    if not sha or not _P(src).exists():
+        _mas = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid, "assembled.wav")
+        src = _mas if os.path.exists(_mas) else ""
+    if not src:
+        raise HTTPException(422, "review audio missing server-side")
+    tx = _transcribe_file(src)
+    manifest = c.get("segment_manifest") or {"segments": []}
+    acoustic = (sub.get("qc_technical") or {})
+    try:
+        review = _dr.direct(script, tx.get("text", ""), tx.get("segments") or [],
+                            acoustic,
+                            (manifest.get("direction") or {}).get("style", "")
+                            if isinstance(manifest.get("direction"), dict)
+                            else str(manifest.get("direction") or ""))
+    except _dr.DirectorUnavailable as e:
+        raise HTTPException(501, str(e))
+    c["direction_review"] = review
+    DB.save_contract(c)
+    _ev(cid, "director.reviewed",
+        {"accuracy": (review.get("performance_review") or {}).get("script_accuracy"),
+         "issues": len((review.get("performance_review") or {}).get("suspected_issues", []))},
+        ag["agent_id"], "agent")
+    return review
