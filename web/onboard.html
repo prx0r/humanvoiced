@@ -41,6 +41,12 @@ what was going on, and that was the strange part.</p>
 <p><button id="publish" disabled>Publish my portfolio</button> <span id="portlink"></span></p>
 </div>
 
+<div class="step" id="s4">
+<h2>4 · Show range (recommended: 2 more)</h2>
+<p>Agents search these most. Two extra samples unlocks documentary + commercial work. Up to 10 total.</p>
+<div id="extras"></div>
+</div>
+
 <p id="msg"></p>
 
 <script>
@@ -117,7 +123,47 @@ document.getElementById('publish').onclick = async () => {
     body: JSON.stringify({publish: true, profile: draft})});
   document.getElementById('portlink').innerHTML =
     'Live: <a href="/portfolio.html">your portfolio</a>';
-  done('s3'); msg('Published. Welcome to the library.');
+  done('s3'); msg('Published. Now show range below.');
+  loadExtras();
 };
+
+async function loadExtras() {
+  const r = await fetch(API + '/v1/voices/suggested-samples').then(x => x.json());
+  const box = document.getElementById('extras');
+  const all = [...r.recommended_two, ...r.further.slice(0, 8)];
+  box.innerHTML = all.map((s, i) =>
+    `<p><b>${s.kind}</b> — ${s.why}<br><button data-kind="${s.kind}" data-i="${i}" onclick="recordExtra(this)">Record 30s</button> <span id="ex-${i}"></span></p>`).join('');
+}
+
+async function recordExtra(btn) {
+  const kind = btn.dataset.kind, i = btn.dataset.i;
+  const out = document.getElementById('ex-' + i);
+  out.textContent = 'recording 30s… read anything natural';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    const mr2 = new MediaRecorder(stream);
+    const chunks = [];
+    mr2.ondataavailable = e => chunks.push(e.data);
+    mr2.onstop = async () => {
+      const blob = new Blob(chunks, {type: mr2.mimeType});
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+      const ch0 = decoded.getChannelData(0), sr = decoded.sampleRate, n = ch0.length;
+      const ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
+      const ws = (o, s) => { for (let k = 0; k < s.length; k++) v.setUint8(o + k, s.charCodeAt(k)); };
+      ws(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); ws(8, 'WAVE');
+      ws(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+      v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+      v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      ws(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let k = 0; k < n; k++) v.setInt16(44 + k * 2, Math.max(-1, Math.min(1, ch0[k])) * 32767, true);
+      const up = await fetch(API + '/v1/narrators/me/sample?kind=' + encodeURIComponent(kind), {
+        method: 'POST', headers: {'Content-Type': 'audio/wav'}, body: new Blob([ab], {type: 'audio/wav'}), credentials: 'include'});
+      out.textContent = up.ok ? 'saved ✓' : 'failed: ' + await up.text();
+    };
+    mr2.start();
+    setTimeout(() => mr2.stop(), 30000);
+  } catch (e) { out.textContent = 'mic blocked'; }
+}
 </script>
 </body></html>

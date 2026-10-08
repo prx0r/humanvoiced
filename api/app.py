@@ -238,8 +238,13 @@ async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
     except Exception as e:
         tx = {"text": "", "provider": "error", "note": str(e)[:100]}
     doc = DB.get_narrator(nid) or {"id": nid}
+    kind = request.query_params.get("kind", "natural")
+    existing = [s for s in doc.get("samples", [])
+                if (s.get("sha256") if isinstance(s, dict) else s)]
+    if len(existing) >= 11:
+        raise HTTPException(409, "sample cap reached (1 base + 10 extras)")
     doc.setdefault("samples", []).append({"sha256": receipt["sha256"],
-                                          "language": language,
+                                          "language": language, "kind": kind,
                                           "transcript_words": len(tx.get("text", "").split())})
     if language not in doc.get("languages", []):
         doc["languages"] = doc.get("languages", []) + [language]
@@ -324,6 +329,38 @@ def voices_search(body: dict[str, Any]):
                         "match_features": n.get("match_features", {}),
                         "reliability": n.get("reliability")})
     return {"matches": _cat.search(catalog, body, body.get("limit", 5))}
+
+
+@app.get("/v1/voices/{nid}/sample")
+def voice_sample(nid: str, sha: str = ""):
+    from fastapi.responses import Response
+    n = DB.get_narrator(nid)
+    if not n:
+        raise HTTPException(404, "unknown narrator")
+    samples = n.get("samples", [])
+    target = sha or (samples[0]["sha256"] if samples and isinstance(samples[0], dict) else samples[0] if samples else "")
+    if not target:
+        raise HTTPException(404, "no samples")
+    from pathlib import Path as _P
+    f = _P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), target + ".wav")
+    if not f.exists():
+        raise HTTPException(404, "audio missing")
+    return Response(f.read_bytes(), media_type="audio/wav")
+
+
+@app.get("/v1/voices/suggested-samples")
+def suggested_samples():
+    """Demand-led extras: which 2 (+up to 10) samples agents actually search.
+    Base natural sample first; extras unlock template eligibility."""
+    from hv import demand as _d
+    return {"base": {"kind": "natural", "text": "Alex café passage (VOICE-DEMO.md Tier 1)",
+                     "why": "casting baseline every buyer compares"},
+            "recommended_two": [
+                {"kind": "documentary", "why": "top agent query: calm measured narration"},
+                {"kind": "commercial", "why": "second demand cluster: 30s ad reads"}],
+            "further": [{"kind": t["id"], "why": t["brief"]} for t in _d.TEMPLATES
+                        if t["id"] not in ("youtube-narration",)],
+            "cap": 10}
 
 
 @app.get("/v1/voices/by-handle/{handle}")

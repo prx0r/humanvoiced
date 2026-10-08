@@ -110,3 +110,12 @@ def test_profile_draft_publish_and_guest_order():
     assert g.json()["commission"] == 0.0 and g.json()["url"].startswith("https://humanvoiced.com/orders/")
     lo = c.post("/api/auth/logout", headers=NH)
     assert lo.json() == {"ok": True}
+
+
+def test_sample_kinds_and_suggested():
+    from fastapi.testclient import TestClient
+    import api.app as A
+    c = TestClient(A.app)
+    r = c.get("/v1/voices/suggested-samples")
+    assert r.json()["recommended_two"][0]["kind"] == "documentary"
+    assert r.json()["cap"] == 10
