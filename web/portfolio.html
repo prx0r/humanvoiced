@@ -24,7 +24,8 @@ const API = 'https://api.humanvoiced.com';
     samps.map((s, i) => {
       const sha = String(s.sha256 || s), kind = s.kind || 'natural';
       if (!/^[0-9a-f]{64}$/.test(sha)) return '';
-      return `<p><b>${esc(kind)}</b><br><audio controls preload="none" src="${API}/v1/voices/${esc(prof.narrator_id)}/sample?sha=${sha}"></audio></p>`;
+      const det = [s.language, s.speech_fraction != null ? Math.round(s.speech_fraction * 100) + '% speech' : null, s.pause_median_ms != null ? s.pause_median_ms + 'ms pauses' : null].filter(Boolean).join(' · ');
+      return `<p><b>${esc(kind)}</b> <span style="color:#666;font-size:.85em">${esc(det)}</span><br><audio controls preload="none" src="${API}/v1/voices/${esc(prof.narrator_id)}/sample?sha=${sha}"></audio></p>`;
     }).join('') +
     `<h2>Record</h2><p>Jobs ${rep.completed || 0} · on-time ${vec.D ?? '—'} · quality ${vec.Q ?? '—'}</p>
     <p><a href="/onboard.html">Get your own voice page</a></p>`;

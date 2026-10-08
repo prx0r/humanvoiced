@@ -24,6 +24,8 @@ still shining.</p>
 what was going on, and that was the strange part.</p>
 <p>Sometimes an ordinary day becomes a story you'll remember for years.</p></div>
 <p><button id="rec">● Record</button> <button id="stop" disabled>■ Stop</button></p>
+<canvas id="spec" width="600" height="120" style="width:100%;background:#111;border-radius:8px"></canvas>
+<p id="advice" style="font-weight:bold"></p>
 <audio id="play" controls style="display:block;margin:1rem 0"></audio>
 <p><small>Review it. Nothing uploads until you approve it in step 3.</small></p>
 </div>
@@ -69,9 +71,43 @@ function encodeWav(buffer) {
   return new Blob([ab], {type: 'audio/wav'});
 }
 
-let mr, chunks = [];
+let mr, chunks = [], analyser = null;
+function advise(level, noise) {
+  const el = document.getElementById('advice');
+  if (noise > 0.06) { el.textContent = '⚠ Background noise — move somewhere quieter.'; return; }
+  if (level < 0.02) { el.textContent = '🔈 Too quiet — move closer to the mic.'; return; }
+  if (level > 0.85) { el.textContent = '🔊 Too loud — back off, you are clipping.'; return; }
+  el.textContent = '✓ Level sounds good.';
+}
+function drawSpec() {
+  const cv = document.getElementById('spec'), ctx = cv.getContext('2d');
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  const draw = () => {
+    if (!analyser) return;
+    analyser.getByteFrequencyData(buf);
+    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, cv.width, cv.height);
+    const n = 120;
+    for (let i = 0; i < n; i++) {
+      const v = buf[Math.floor(i * buf.length / n)] / 255;
+      ctx.fillStyle = v > 0.9 ? '#f66' : '#4c9';
+      ctx.fillRect(i * (cv.width / n), cv.height - v * cv.height, cv.width / n - 1, v * cv.height);
+    }
+    let sum = 0;
+    for (let i = 0; i < 40; i++) sum += buf[i];
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) peak = Math.max(peak, buf[i]);
+    advise(peak / 255, sum / 40 / 255);
+    requestAnimationFrame(draw);
+  };
+  draw();
+}
 document.getElementById('rec').onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 512;
+  actx.createMediaStreamSource(stream).connect(analyser);
+  drawSpec();
   mr = new MediaRecorder(stream); chunks = [];
   mr.ondataavailable = e => chunks.push(e.data);
   mr.onstop = async () => {
@@ -87,6 +123,8 @@ document.getElementById('rec').onclick = async () => {
 };
 document.getElementById('stop').onclick = () => {
   mr.stop();
+  analyser = null;
+  document.getElementById('advice').textContent = '';
   document.getElementById('rec').disabled = false;
   document.getElementById('stop').disabled = true;
 };

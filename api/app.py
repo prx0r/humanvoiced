@@ -509,13 +509,20 @@ def portfolio(nid: str):
         raise HTTPException(404, "unknown narrator")
     r = reps.get(nid, R.ReputationVector(nid))
     pub = (n.get("profile_published") or {})
+    pub_samples = []
+    for s in n.get("samples", []):
+        if not (isinstance(s, dict) and s.get("consented_public")):
+            continue
+        ac = (s.get("analysis") or {}).get("acoustic", {})
+        pub_samples.append({"sha256": s.get("sha256"), "language": s.get("language"),
+                            "kind": s.get("kind", "natural"),
+                            "speech_fraction": ac.get("speech_fraction"),
+                            "peak": ac.get("peak"),
+                            "pause_median_ms": ac.get("pause_median_ms")})
     return {"narrator_id": nid, "handle": n.get("handle", ""),
             "languages": n.get("languages", []),
             "profile": {k: pub.get(k) for k in ("display_name", "bio", "categories")},
-            "samples": [{"sha256": s.get("sha256"), "language": s.get("language"),
-                         "kind": s.get("kind", "natural")}
-                        for s in n.get("samples", [])
-                        if isinstance(s, dict) and s.get("consented_public")],
+            "samples": pub_samples,
             "reputation": r.to_dict()}
 
 
@@ -589,12 +596,14 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
 def accept_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import globalx as _gx
     nid = _narrator(x_hv_session)
+    cur = DB.get_contract(cid)
+    if not cur:
+        raise HTTPException(404, "unknown contract")
+    if not DB.is_offered(cid, nid):
+        raise HTTPException(403, "offer was not dispatched to you")
     c = DB.accept_atomic(cid, nid)
     if not c:
-        cur = DB.get_contract(cid)
-        if not cur:
-            raise HTTPException(404, "unknown contract")
-        raise HTTPException(409, "offer unavailable (taken, unassigned, or wrong state)")
+        raise HTTPException(409, "offer unavailable (taken or wrong state)")
     obj = C.HVContract(**{k: c[k] for k in C.HVContract().__dict__ if k in c})
     try:
         C.accept(obj, nid, funded=(c["funding_status"] == "secured"))
