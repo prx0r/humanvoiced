@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 STATE_TTL = 600
+SESSION_TTL = 30 * 86400
 
 
 class SessionStore:
@@ -57,7 +58,19 @@ class SessionStore:
         return tok
 
     def narrator_for(self, token: str) -> str | None:
+        import time as _t
         conn = self._conn()
-        row = conn.execute("SELECT narrator_id FROM sessions WHERE token=?", (token,)).fetchone()
+        row = conn.execute("SELECT narrator_id, created FROM sessions WHERE token=?", (token,)).fetchone()
         conn.close()
-        return row[0] if row else None
+        if not row:
+            return None
+        if _t.time() - row[1] > SESSION_TTL:
+            self.revoke(token)
+            return None
+        return row[0]
+
+    def revoke(self, token: str):
+        conn = self._conn()
+        conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+        conn.commit()
+        conn.close()

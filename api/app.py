@@ -41,6 +41,16 @@ ALLOW_SIMULATED = os.getenv("HV_ALLOW_SIMULATED", "1") == "1"
 
 app = FastAPI(title="HumanVoiced", version="0.1")
 
+
+@app.middleware("http")
+async def _cookie_session(request, call_next):
+    if not request.headers.get("x-hv-session"):
+        tok = request.cookies.get("hv_session")
+        if tok:
+            request.scope["headers"] = [(k, v) for k, v in request.scope["headers"]
+                                        if k != b"x-hv-session"] + [(b"x-hv-session", tok.encode())]
+    return await call_next(request)
+
 SESS = SessionStore(os.getenv("HV_SESSIONS_DB", "data/hv-sessions.db"))
 DB = Store(os.getenv("HV_DB", "data/hv.db"))
 led = L.EventLedger(os.getenv("HV_EVENTS_DB", "data/hv-events.db"))
@@ -105,6 +115,7 @@ def google_start():
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str = "", state: str = ""):
+    from fastapi.responses import JSONResponse
     if not code:
         raise HTTPException(400, "missing code")
     if not SESS.consume_state(state):
@@ -119,15 +130,40 @@ def google_callback(code: str = "", state: str = ""):
                           "handle": "", "languages": [], "prefs": {},
                           "samples": [], "created": utcnow_now()})
     token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
-    return {"narrator_id": nid, "email": profile.get("email"), "session": token}
+    resp = JSONResponse({"narrator_id": nid, "email": profile.get("email")})
+    resp.set_cookie("hv_session", token, httponly=True, secure=True,
+                    samesite="lax", max_age=30 * 86400, path="/")
+    return resp
+
+
+@app.post("/api/auth/logout")
+def logout(x_hv_session: str | None = Header(None)):
+    if x_hv_session:
+        SESS.revoke(x_hv_session)
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("hv_session", path="/")
+    return resp
 
 
 # ---------- narrators / voices ----------
 
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
+    from hv import profile_draft as _pd
     nid = _narrator(x_hv_session)
     doc = DB.get_narrator(nid) or {"id": nid}
+    if body.get("publish"):
+        pub = _pd.publish(doc, body.get("profile", {}))
+        DB.save_narrator(doc)
+        _ev(nid, "profile.published", {"handle": pub.get("display_name", "")}, nid, "narrator")
+        return {"published": pub}
+    if body.get("draft_from_tech"):
+        draft = _pd.draft_from_sample(body.get("tech", {}), body,
+                                      body.get("wpm"))
+        doc["profile_draft"] = draft
+        DB.save_narrator(doc)
+        return {"draft": draft}
     doc.update({"handle": body.get("handle", doc.get("handle", "")),
                 "languages": body.get("languages", doc.get("languages", [])),
                 "prefs": body.get("prefs", doc.get("prefs", {}))})
@@ -160,6 +196,31 @@ def voices(style: str = "", language: str = ""):
                     "languages": n.get("languages", []),
                     "samples": len(n.get("samples", []))})
     return {"voices": out}
+
+
+@app.post("/v1/orders/guest")
+def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Guest checkout record: no buyer account; high-entropy order credential.
+    Payout shows 100% to narrator, 0% commission (processor fees are platform cost)."""
+    import secrets as _s
+    import sqlite3 as _sq
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(body.get("contract_id", ""))
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "unknown or foreign contract")
+    oid = "ord_" + _s.token_hex(8)
+    cred = _s.token_urlsafe(24)
+    conn = _sq.connect(str(DB.db_path), timeout=30)
+    conn.execute("INSERT INTO orders VALUES (?, ?)", (oid, __import__("json").dumps(
+        {"order_id": oid, "contract_id": c["contract_id"], "credential": sha256(cred),
+         "narrator_payout": c["payout_usd"], "commission": 0.0})))
+    conn.commit()
+    conn.close()
+    _ev(c["contract_id"], "order.created", {"order_id": oid}, ag["agent_id"], "agent")
+    return {"order_id": oid, "url": f"https://humanvoiced.com/orders/{oid}",
+            "access_credential": cred, "narrator_payout": c["payout_usd"],
+            "commission": 0.0,
+            "note": "store the credential securely; processor fees borne by platform"}
 
 
 @app.get("/v1/voices/by-handle/{handle}")

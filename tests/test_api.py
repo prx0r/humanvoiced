@@ -90,3 +90,23 @@ def test_restart_survives():
     import api.app as B
     B.DB.save_contract({"contract_id": "hvc_x", "status": "offered"})
     assert B.DB.get_contract("hvc_x")["status"] == "offered"
+
+
+def test_profile_draft_publish_and_guest_order():
+    from fastapi.testclient import TestClient
+    import api.app as A
+    c = TestClient(A.app)
+    d = c.post("/v1/narrators/me/profile",
+               json={"draft_from_tech": True, "tech": {"peak": 15000, "silence_ratio": 0.1},
+                     "display_name": "Alex", "languages": ["en"]}, headers=NH)
+    assert d.status_code == 200 and "nationality" not in str(d.json())
+    p = c.post("/v1/narrators/me/profile",
+               json={"publish": True, "profile": {"display_name": "Alex", "nationality": "x"}},
+               headers=NH)
+    assert p.json()["published"].get("nationality") is None
+    r = c.post("/v1/contracts", json={"script_text": "hello world " * 40, "narrator_ids": ["nar_041"]}, headers=H)
+    cid = r.json()["contract"]["contract_id"]
+    g = c.post("/v1/orders/guest", json={"contract_id": cid}, headers=H)
+    assert g.json()["commission"] == 0.0 and g.json()["url"].startswith("https://humanvoiced.com/orders/")
+    lo = c.post("/api/auth/logout", headers=NH)
+    assert lo.json() == {"ok": True}

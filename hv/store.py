@@ -24,6 +24,7 @@ class Store:
         conn.execute("CREATE TABLE IF NOT EXISTS spend (agent_id TEXT, day TEXT, amount_minor INT, PRIMARY KEY (agent_id, day))")
         conn.execute("CREATE TABLE IF NOT EXISTS uploads (sha256 TEXT PRIMARY KEY, contract_id TEXT, narrator_id TEXT, bytes INT, at REAL)")
         conn.execute("CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, doc TEXT)")
         conn.commit()
         conn.close()
 
