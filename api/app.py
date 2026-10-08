@@ -363,6 +363,65 @@ def suggested_samples():
             "cap": 10}
 
 
+CASTINGS: dict[str, dict] = {}
+
+
+@app.post("/v1/casting")
+def casting_create(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    from hv import audition as _a
+    ag = _agent(x_hv_agent_key)
+    try:
+        call = _a.casting_call(body.get("project", ""), body.get("role", ""),
+                               body.get("side_text", ""), body.get("deadline_at", ""))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    CASTINGS[call["casting_id"]] = call
+    _ev(call["casting_id"], "casting.opened", {"role": call["role"]}, ag["agent_id"], "agent")
+    return call
+
+
+@app.post("/v1/casting/{cid}/submit")
+async def casting_submit(cid: str, request: Request, x_hv_session: str | None = Header(None)):
+    from hv import audition as _a
+    nid = _narrator(x_hv_session)
+    call = CASTINGS.get(cid)
+    if not call:
+        raise HTTPException(404, "unknown casting")
+    body = await request.body()
+    if len(body) < 44 or body[:4] != b"RIFF":
+        raise HTTPException(422, "send WAV bytes")
+    receipt = UPL.store_upload(body, f"audition:{cid}:{nid}")
+    try:
+        return _a.submit_read(call, nid, receipt["sha256"])
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/v1/casting/{cid}/compare")
+def casting_compare(cid: str, x_hv_agent_key: str | None = Header(None)):
+    from hv import audition as _a
+    _agent(x_hv_agent_key)
+    call = CASTINGS.get(cid)
+    if not call:
+        raise HTTPException(404, "unknown casting")
+    return {"entries": _a.compare(call)}
+
+
+@app.post("/v1/casting/{cid}/decide")
+def casting_decide(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    from hv import audition as _a
+    ag = _agent(x_hv_agent_key)
+    call = CASTINGS.get(cid)
+    if not call:
+        raise HTTPException(404, "unknown casting")
+    try:
+        out = _a.decide(call, body.get("winner_id", ""), body.get("notes", ""))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    _ev(cid, "casting.decided", {"winner": out["winner"]}, ag["agent_id"], "agent")
+    return out
+
+
 @app.get("/v1/voices/by-handle/{handle}")
 def by_handle(handle: str):
     for n in DB.list_narrators():
