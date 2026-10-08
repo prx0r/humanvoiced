@@ -1050,6 +1050,41 @@ def get_preset(name: str, x_hv_agent_key: str | None = Header(None)):
     return {"preset": _resolve_preset(name, ag)}
 
 
+@app.post("/v1/studio/references")
+async def upload_reference(request: Request, x_hv_agent_key: str | None = Header(None)):
+    """Register a channel reference master: measured once, matched forever.
+    WAV bytes; profile (bands + loudness) stored, audio kept for re-measure."""
+    from hv import reference as _rf
+    ag = _agent(x_hv_agent_key)
+    body: bytes = await request.body()
+    if len(body) > 25 * 1024 * 1024 or len(body) < 44 or body[:4] != b"RIFF":
+        raise HTTPException(422, "send WAV bytes under 25MB")
+    rid = "ref_" + sha256(body)[:12]
+    rdir = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), "refs")
+    os.makedirs(rdir, exist_ok=True)
+    fpath = os.path.join(rdir, rid + ".wav")
+    with open(fpath, "wb") as f:
+        f.write(body)
+    try:
+        profile = _rf.measure_file(fpath)
+    except Exception as e:
+        raise HTTPException(422, f"could not measure reference: {e}"[:200])
+    doc = {"id": rid, "owner": ag["agent_id"], "sha256": sha256(body),
+           "profile": profile, "path": fpath}
+    DB.save_ref(doc)
+    _ev(rid, "reference.registered", {"lufs": profile.get("lufs")},
+        ag["agent_id"], "agent")
+    return {"reference": {k: doc[k] for k in ("id", "owner", "sha256", "profile")}}
+
+
+@app.get("/v1/studio/references")
+def list_references(x_hv_agent_key: str | None = Header(None)):
+    ag = _agent(x_hv_agent_key)
+    return {"references": [
+        {k: d[k] for k in ("id", "owner", "sha256", "profile")}
+        for d in DB.list_refs(ag["agent_id"])]}
+
+
 def _transcribe_file(path: str, language: str = "en") -> dict:
     from hv import transcribe as _tr
     try:
@@ -1104,8 +1139,21 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
                 f.write(srt)
             assets["transcript.srt"] = spath
         integrity = None
+        ref_id = None
         if tier == "studio":
-            st = _proc.studio_master(src, out_dir, preset)
+            from hv import reference as _rf
+            ref_curve = None
+            ref_id = body.get("reference_id") or preset.get("reference_id")
+            if preset["name"] == "match-my-channel" and not ref_id:
+                raise HTTPException(422, "match-my-channel needs reference_id")
+            if ref_id:
+                ref = DB.get_ref(ref_id)
+                if not ref or ref.get("owner") != ag["agent_id"]:
+                    raise HTTPException(404, "unknown reference")
+                take_profile = _rf.measure_file(src)
+                ref_curve = _rf.match_curve(take_profile["bands"],
+                                            ref["profile"]["bands"])
+            st = _proc.studio_master(src, out_dir, preset, ref_curve)
             assets.update(st)
             stx = _transcribe_file(st["studio.wav"])
             integrity = _proc.integrity_check(src, st["studio.wav"],
@@ -1119,6 +1167,19 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
             "master_sha256") == sha else "single_submission"
         manifest["edit_map"] = (c.get("assembly") or {}).get("edit_map", [])
         manifest["session"] = c.get("session") or {}
+        if ref_id:
+            manifest["reference_id"] = ref_id
+        # A preset is settings + versions: engine, full chain, match flag.
+        _pset = assets.get("preset") or {}
+        manifest["processing"] = {
+            "engine": _pset.get("engine") or _pr.ENGINE_VERSION,
+            "chain": assets.get("chain", ""),
+            "preset_settings": _pset or {"tier": "basic"},
+            "reference_matched": bool(assets.get("reference_matched")),
+            "denoise_backend": "afftdn",
+        }
+        if ref_id:
+            manifest["reference_id"] = ref_id
         # original take(s) stay fetchable as evidence: resolve raw or assembled bytes
         _raw = str(_P(UPL.RAW_DIR, sha + ".wav"))
         _asm = os.path.join(os.getenv("HV_PACK_DIR", "data/packs"), cid, "assembled.wav")

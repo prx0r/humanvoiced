@@ -30,7 +30,12 @@ EQ = {
     "flat": None,
     "warm": "bass=g=2:f=120,treble=g=-1:f=8000",
     "bright": "treble=g=2:f=6000",
+    "presence": "treble=g=1.5:f=5000,equalizer=f=250:t=q:w=1:g=-1",
 }
+
+# Gentle adaptive leveling (voice riding): follows phrase energy, gates on
+# silence so pauses stay pauses. Compression after riding stays light.
+RIDE = "dynaudnorm=f=150:g=7:p=0.95"
 
 
 class ProcessingError(RuntimeError):
@@ -133,14 +138,22 @@ def basic_pack(src_wav: str, out_dir: str, target_lufs: float = -19.0) -> dict:
             "measured": meas, "chain": "highpass=80,loudnorm,alimiter"}
 
 
-def studio_master(src_wav: str, out_dir: str, preset: dict) -> dict:
-    """Enhanced master per channel preset. Denoise/compress/EQ per settings."""
+def studio_master(src_wav: str, out_dir: str, preset: dict,
+                  ref_curve: str | None = None) -> dict:
+    """Enhanced master per channel preset. Denoise, ride, compress, de-ess,
+    EQ character, optional reference match, loudness finish. No reverb ever
+    on narration masters; no generative resynthesis anywhere in this chain."""
     os.makedirs(out_dir, exist_ok=True)
-    pre = f"highpass=f=80,afftdn=nr={preset['denoise_db']}:nf=-25"
-    comp = COMPRESSION[preset["compression"]]
-    chain = f"{pre},acompressor={comp}"
+    chain = f"highpass=f=80,afftdn=nr={preset['denoise_db']}:nf=-25"
+    if preset.get("ride", True):
+        chain += f",{RIDE}"
+    chain += f",acompressor={COMPRESSION[preset['compression']]}"
+    if preset.get("deess", True):
+        chain += ",deesser"
     if EQ[preset["eq"]]:
         chain += "," + EQ[preset["eq"]]
+    if ref_curve:
+        chain += f",firequalizer={ref_curve}"
     studio = os.path.join(out_dir, "studio.wav")
     meas = _dual_loudnorm(src_wav, studio, chain, preset["target_lufs"])
     mp3 = os.path.join(out_dir, "studio.mp3")
@@ -150,8 +163,10 @@ def studio_master(src_wav: str, out_dir: str, preset: dict) -> dict:
         raise ProcessingError("studio mp3 export failed: " + p.stderr[-300:])
     return {"studio.wav": studio, "studio.mp3": mp3, "measured": meas,
             "chain": chain + ",loudnorm,alimiter",
-            "preset": {k: preset[k] for k in ("target_lufs", "denoise_db",
-                                             "compression", "eq")}}
+            "preset": {k: preset.get(k) for k in ("target_lufs", "denoise_db",
+                                                 "compression", "eq", "deess",
+                                                 "ride", "engine")},
+            "reference_matched": bool(ref_curve)}
 
 
 def duration_sec(wav_path: str) -> float:

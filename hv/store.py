@@ -28,6 +28,7 @@ class Store:
         conn.execute("CREATE TABLE IF NOT EXISTS agents (key_hash TEXT PRIMARY KEY, doc TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS presets (id TEXT PRIMARY KEY, doc TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS assets (sha256 TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS refs (id TEXT PRIMARY KEY, doc TEXT)")
         conn.commit()
         conn.close()
 
@@ -169,6 +170,25 @@ class Store:
         row = conn.execute("SELECT doc FROM assets WHERE sha256=?", (sha,)).fetchone()
         conn.close()
         return json.loads(row[0]) if row else None
+
+    def save_ref(self, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO refs VALUES (?, ?)", (doc["id"], json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_ref(self, rid: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM refs WHERE id=?", (rid,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+
+    def list_refs(self, owner: str) -> list[dict]:
+        conn = self._conn()
+        rows = conn.execute("SELECT doc FROM refs").fetchall()
+        conn.close()
+        return [json.loads(r[0]) for r in rows
+                if json.loads(r[0]).get("owner") == owner]
 
     def save_narrator(self, doc: dict):
         conn = self._conn()
