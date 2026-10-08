@@ -186,14 +186,18 @@ def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
 async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
     nid = _narrator(x_hv_session)
     body = await request.body()
+    language = request.query_params.get("language", "en")
     if len(body) > MAX_UPLOAD_BYTES or len(body) < 44 or body[:4] != b"RIFF":
         raise HTTPException(422, "send WAV bytes under 50MB")
-    receipt = UPL.store_upload(body, f"sample:{nid}")
+    receipt = UPL.store_upload(body, f"sample:{nid}:{language}")
     doc = DB.get_narrator(nid) or {"id": nid}
-    doc.setdefault("samples", []).append(receipt["sha256"])
+    doc.setdefault("samples", []).append({"sha256": receipt["sha256"],
+                                          "language": language})
+    if language not in doc.get("languages", []):
+        doc["languages"] = doc.get("languages", []) + [language]
     DB.save_narrator(doc)
-    _ev(nid, "sample.recorded", {"sha256": receipt["sha256"]}, nid, "narrator")
-    return {"narrator_id": nid, "sample": receipt["sha256"]}
+    _ev(nid, "sample.recorded", {"sha256": receipt["sha256"], "language": language}, nid, "narrator")
+    return {"narrator_id": nid, "sample": receipt["sha256"], "language": language}
 
 
 @app.get("/v1/voices")
@@ -300,7 +304,13 @@ def quote(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
 
 @app.post("/v1/contracts")
 def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    from hv import globalx as _gx
     ag = _agent(x_hv_agent_key)
+    country = (brief.get("narrator_country") or "").upper()
+    if country:
+        ok, why = _gx.bookable_in(country)
+        if not ok:
+            raise HTTPException(402, why)
     c, priced = _quote_for(brief, ag)
     today = _dt.date.today().isoformat()
     DB.add_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100))
