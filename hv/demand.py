@@ -20,6 +20,18 @@ TEMPLATES = [
     {"id": "podcast-ad", "label": "Podcast / ad read",
      "brief": "30–60s commercial, separate usage terms",
      "sample_kind": "commercial", "agent_keywords": ["advertisement", "podcast", "commercial"]},
+    {"id": "shorts", "label": "Shorts / vertical video",
+     "brief": "15–60s punchy read for Shorts/Reels/TikTok",
+     "sample_kind": "energetic", "agent_keywords": ["shorts", "reels", "tiktok", "vertical", "hook"]},
+    {"id": "character-readout", "label": "Character readout",
+     "brief": "Voiced character lines with direction, NPC/game style",
+     "sample_kind": "character", "agent_keywords": ["character", "npc", "gaming", "lines", "role"]},
+    {"id": "presentation-demo", "label": "Presentation / demo read",
+     "brief": "Product demo, pitch or hackathon voiceover, clear and human",
+     "sample_kind": "commercial", "agent_keywords": ["presentation", "demo", "pitch", "hackathon", "product"]},
+    {"id": "native-reactions", "label": "Native reactions & mannerisms",
+     "brief": "Natural laughs, gasps, asides in your own accent — what AI can't fake",
+     "sample_kind": "natural", "agent_keywords": ["reactions", "native", "accent", "mannerisms", "unscripted"]},
 ]
 
 

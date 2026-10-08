@@ -69,3 +69,27 @@ def test_search_quote_draft_status(tmp_path):
     assert "error" in st
     rep = _call("hv.reputation.get", {"narrator_id": "nar_m1"})
     assert rep["result"]["history_label"] == "new_voice"
+
+
+def test_portfolio_readout_and_compare(tmp_path):
+    DB = _db(tmp_path)
+    DB.save_narrator({"id": "nar_p1", "handle": "pia", "languages": ["en"],
+                      "profile_published": {"display_name": "Pia", "bio": "Warm reads"},
+                      "samples": [{"sha256": "a" * 64, "kind": "natural",
+                                   "language": "en", "consented_public": True},
+                                  {"sha256": "b" * 64, "kind": "secret",
+                                   "consented_public": False}],
+                      "prefs": {"categories": ["storytelling"]},
+                      "reputation": {"completed": 3, "vector": {"Q": 0.9},
+                                     "verified_incidents": 0, "appeals_won": 0}})
+    DB.save_narrator({"id": "nar_hidden", "handle": "ghost"})
+    p = _call("hv.portfolio.get", {"handle": "pia"})
+    assert p["result"]["display_name"] == "Pia"
+    assert len(p["result"]["samples"]) == 1  # private sample excluded
+    assert p["result"]["samples"][0]["play_url"].endswith("a" * 64)
+    assert p["result"]["reputation"]["completed"] == 3
+    assert "error" in _call("hv.portfolio.get", {"handle": "ghost"})
+    cmp_ = _call("hv.voices.compare", {"narrator_ids": ["nar_p1", "nar_hidden"],
+                                       "preferences": {}})
+    assert [c["narrator_id"] for c in cmp_["result"]["compared"]] == ["nar_p1"]
+    assert cmp_["result"]["compared"][0]["samples"] == 1

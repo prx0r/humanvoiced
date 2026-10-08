@@ -20,10 +20,10 @@ WORDS_PER_MINUTE = 150
 
 # Buyer-paid service fee (HumanVoiced revenue, NOT commission).
 # The narrator always receives 100% of narrator_payout; the buyer pays
-# payout + fee, disclosed as separate lines. $5/job is illustrative, not
-# validated — repeat volume or higher-value work must carry the unit
-# economics, not the narrator's pay.
-SERVICE_FEE_USD = 5.00
+# payout + fee, disclosed as separate lines. Flat $1 keeps short-form
+# viable (a $5 fee would exceed a short's entire payout); volume and
+# studio upgrades carry the economics, not the fee. Illustrative.
+SERVICE_FEE_USD = 1.00
 
 TIERS = {"standard": 1.0, "proven": 1.3, "specialist": 1.8, "priority": 1.5}
 

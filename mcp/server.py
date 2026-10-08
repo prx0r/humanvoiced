@@ -30,6 +30,10 @@ TOOLS = [
      "description": "Draft order (nothing funded) + approval URL for the paying human"},
     {"name": "hv.contract.status",
      "description": "Contract state + receipt for the contracting agent"},
+    {"name": "hv.portfolio.get",
+     "description": "Public voice readout: consented samples, reputation, languages, categories"},
+    {"name": "hv.voices.compare",
+     "description": "Side-by-side public portfolios against stated preferences"},
     {"name": "hv.reputation.get",
      "description": "R_n outcome vector (Q,D,A,S,C) + windows + appeals"},
     {"name": "hv.disputes.get_rules",
@@ -37,8 +41,32 @@ TOOLS = [
     {"name": "hv.casting.search",
      "description": "Multi-role cast list: roles with sides matched to character profiles"},
 ]
-COMING = ["hv.voices.compare", "hv.portfolio.get", "hv.contract.events",
-          "hv.support.ask"]
+COMING = ["hv.contract.events", "hv.support.ask"]
+
+
+def _public_portfolio(nid: str) -> dict:
+    """Agent readout: public-safe only. No private samples, no identity,
+    no governance internals — playable consented samples + proven record."""
+    n = DB.get_narrator(nid) or {}
+    if not n.get("profile_published"):
+        raise ValueError("voice not published")
+    pub = n.get("profile_published") or {}
+    samples = [{"sha256": s.get("sha256"), "kind": s.get("kind", "natural"),
+                "language": s.get("language"),
+                "play_url": f"/v1/voices/{nid}/sample?sha={s.get('sha256')}"}
+               for s in n.get("samples", [])
+               if isinstance(s, dict) and s.get("consented_public")]
+    saved = n.get("reputation") or {}
+    r = R.ReputationVector(nid)
+    r.completed = int(saved.get("completed", 0))
+    for d in R.DIMENSIONS:
+        r.vector[d] = (saved.get("vector") or {}).get(d)
+    return {"narrator_id": nid, "handle": n.get("handle", ""),
+            "display_name": pub.get("display_name", ""),
+            "bio": pub.get("bio", ""),
+            "languages": n.get("languages", []),
+            "categories": (n.get("prefs") or {}).get("categories", []),
+            "samples": samples, "reputation": r.to_dict()}
 
 
 def _agent(args: dict) -> dict:
@@ -137,6 +165,36 @@ def handle(method: str, params: dict) -> dict:
                                "narrator_id": c.get("narrator_id"),
                                "settlement": c.get("settlement"),
                                "pack": bool(c.get("pack"))}}
+        if name == "hv.portfolio.get":
+            by = args.get("narrator_id") or ""
+            handle = args.get("handle", "")
+            if handle and not by:
+                for n in DB.list_narrators():
+                    if (n.get("handle", "") or "").lower() == handle.lower().lstrip("@"):
+                        by = n["id"]
+                        break
+            try:
+                return {"result": _public_portfolio(by)}
+            except ValueError as e:
+                return {"error": str(e)}
+        if name == "hv.voices.compare":
+            from hv import catalog as _cat
+            prefs = args.get("preferences", {})
+            out = []
+            for ident in args.get("narrator_ids", [])[:5]:
+                try:
+                    p = _public_portfolio(ident)
+                except ValueError:
+                    continue
+                feats = {"perceptual": 0.5, "delivery": 0.5, "pace": 0.5,
+                         "category": 0.5}
+                score, reasons, uncer = _cat.suitability(
+                    {"match_features": feats}, prefs, None)
+                out.append({"narrator_id": p["narrator_id"], "handle": p["handle"],
+                            "samples": len(p["samples"]),
+                            "completed": p["reputation"]["completed"],
+                            "reasons": reasons, "uncertainties": uncer})
+            return {"result": {"compared": out}}
         if name == "hv.reputation.get":
             nid = args.get("narrator_id", "")
             doc = DB.get_narrator(nid) or {}
