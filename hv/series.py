@@ -14,7 +14,10 @@ from hv.util import sha256, uid, utcnow
 def create_series(principal_id: str, agent_id: str, narrator_id: str,
                   episodes: int, minutes_each: float, price_each: float,
                   cadence_days: int = 7) -> dict:
-    assert 2 <= episodes <= 52, "series are 2–52 episodes"
+    if not 2 <= episodes <= 52:
+        raise ValueError("series are 2–52 episodes")
+    if price_each <= 0:
+        raise ValueError("price_each must be positive")
     total = round(episodes * price_each, 2)
     eps = [{"episode": i + 1, "status": "pending", "upload_sha256": "",
             "due_offset_days": cadence_days * i}
@@ -25,7 +28,20 @@ def create_series(principal_id: str, agent_id: str, narrator_id: str,
             "price_each": price_each, "total_value": total,
             "cadence_days": cadence_days, "status": "active",
             "units": eps, "created_at": utcnow(),
-            "terms_sha256": sha256(f"{principal_id}:{narrator_id}:{episodes}:{price_each}")}
+            "terms_sha256": terms_hash({"principal_id": principal_id,
+                                        "agent_id": agent_id,
+                                        "narrator_id": narrator_id,
+                                        "episodes": episodes,
+                                        "minutes_each": minutes_each,
+                                        "price_each": price_each,
+                                        "cadence_days": cadence_days,
+                                        "policy_version": "0.1"})}
+
+
+def terms_hash(terms: dict) -> str:
+    """Full canonical agreement hash: rights, deadlines, guarantees, prices."""
+    import json
+    return sha256(json.dumps(terms, sort_keys=True))
 
 
 def submit_episode(series: dict, episode: int, upload_sha256: str, late: bool = False) -> dict:
@@ -70,8 +86,9 @@ def master_agreement(principal_id: str, agent_id: str, narrator_id: str,
     """Master terms: creator owes scripts+funding+minimum; narrator owes
     capacity+acceptance+delivery. Neither side enforceable by lock-in —
     cancellation settles on the guaranteed minimum."""
-    assert 0 < minimum_guaranteed <= episodes, "guarantee within series size"
-    return {"master_id": "hvm_" + uid()[:8], "principal_id": principal_id,
+    if not 0 < minimum_guaranteed <= episodes:
+        raise ValueError("guarantee must be within series size")
+    master = {"master_id": "hvm_" + uid()[:8], "principal_id": principal_id,
             "agent_id": agent_id, "narrator_id": narrator_id,
             "episodes": episodes, "max_words_per_episode": max_words_per_episode,
             "price_each": price_each, "minimum_guaranteed": minimum_guaranteed,
@@ -80,6 +97,11 @@ def master_agreement(principal_id: str, agent_id: str, narrator_id: str,
                                  "portfolio_attribution": True,
                                  "voice_cloning": False},
             "scripts_supplied": 0, "status": "active", "created_at": utcnow()}
+    master["terms_sha256"] = terms_hash({k: master[k] for k in
+        ("principal_id", "agent_id", "narrator_id", "episodes",
+         "max_words_per_episode", "price_each", "minimum_guaranteed",
+         "contract_weeks", "delivery_sla_hours", "rights")})
+    return master
 
 
 def creator_supply_script(master: dict, episode: int, late: bool = False) -> dict:

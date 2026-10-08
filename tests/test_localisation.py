@@ -36,5 +36,7 @@ def test_package_and_srt():
 
 
 def test_edits_record():
-    e = L.edits_json(["a", "b"], ["a", "B!"])
-    assert e == [{"scene": 2, "draft": "b", "approved": "B!", "changed": True}]
+    e = L.edits_json(["a", "b", "c"], ["a", "B!", "c", "d"])
+    assert e[0]["change"] == "replace" and e[0]["approved"] == ["B!"]
+    assert e[1]["change"] == "insert" and e[1]["approved"] == ["d"]
+    assert L.edits_json(["a"], ["a"]) == []

@@ -18,11 +18,10 @@ TOOLS = [
     {"name": "hv.portfolio.get", "description": "Public portfolio: consented samples, windowed stats with sample counts"},
     {"name": "hv.pricing.quote", "description": "Fixed P(t) quote from frozen script word count; tier + rarity applied"},
     {"name": "hv.reputation.get", "description": "R_n outcome vector (Q,D,A,S,C) + windows + appeals"},
-    {"name": "hv.contract.get", "description": "Frozen contract terms + hashes + status"},
-    {"name": "hv.contract.events", "description": "Append-only lifecycle history for a contract"},
     {"name": "hv.disputes.get_rules", "description": "Published rule IDs (PAY/SLA/QC/REV/DIS/REP) — agents cite, never invent"},
-    {"name": "hv.support.ask", "description": "Support answers from ledger + policy docs; no payout/sanction authority"},
 ]
+COMING = ["hv.portfolio.get", "hv.pricing.quote", "hv.contract.get",
+          "hv.contract.events", "hv.support.ask"]
 
 
 def handle(method: str, params: dict) -> dict:
@@ -38,7 +37,12 @@ def handle(method: str, params: dict) -> dict:
         feats = args.get("features", {"VoiceFit": 0.8, "Reliability": 0.7,
                                       "Availability": 1.0, "PriceFit": 0.9, "Preferences": 0.8})
         return {"result": {"match": R.match_score(feats), "weights": R.MATCH_WEIGHTS}}
-    return {"error": f"tool {name} reserved for funded milestone"}
+    if name == "hv.disputes.get_rules":
+        from hv import dispute_rules as _dr
+        return {"result": _dr.RULES}
+    if name in COMING:
+        return {"error": f"tool {name} tracked, not yet implemented (see TECH-SPEC P0)"}
+    return {"error": f"unknown tool {name}"}
 
 
 def main() -> None:

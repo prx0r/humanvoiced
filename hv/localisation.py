@@ -23,10 +23,7 @@ def qualified_for(worker_caps: set[str], job: dict) -> tuple[bool, str]:
     if missing:
         return False, f"missing capabilities: {missing}"
     if job.get("kind") in ("review", "dub"):
-        pair = job.get("pair", "")
-        qual = f"review_{pair.replace('-', '_')}"
-        if qual not in worker_caps and "narrate" not in qual:
-            pass  # combined-service workers carry review_* explicitly
+        qual = f"review_{job.get('pair', '').replace('-', '_')}"
         if qual not in worker_caps:
             return False, f"bilingual qualification {qual} not verified"
     return True, "ok"
@@ -44,12 +41,15 @@ def chain_jobs(job: dict) -> list[dict]:
 
 
 def edits_json(draft_lines: list[str], approved_lines: list[str]) -> list[dict]:
-    """Line-level edit record: what the human changed and where."""
+    """Line-level edit record via difflib: additions/deletions never dropped."""
+    import difflib as _d
     out = []
-    for i, (d, a) in enumerate(zip(draft_lines, approved_lines)):
-        if d != a:
-            out.append({"scene": i + 1, "draft": d, "approved": a,
-                        "changed": True})
+    for tag, i1, i2, j1, j2 in _d.SequenceMatcher(None, draft_lines, approved_lines).get_opcodes():
+        if tag == "equal":
+            continue
+        out.append({"draft_span": [i1, i2], "approved_span": [j1, j2],
+                    "draft": draft_lines[i1:i2], "approved": approved_lines[j1:j2],
+                    "change": tag})
     return out
 
 

@@ -31,20 +31,32 @@ RULES = {
 
 
 def evaluate(report: dict, timeline: dict) -> list[dict]:
-    """Deterministic flags from the QC report + server timeline. No LLM."""
+    """Deterministic flags from the QC report + server timeline. No LLM.
+    Missing evidence is UNKNOWN (→ human), never satisfactory."""
     flags = []
     tech = report.get("technical", {})
     align = report.get("script_alignment", {})
-    if not tech.get("file_valid"):
+    if "file_valid" not in tech:
+        flags.append({"code": "F_UNKNOWN_TECH", "rule": "QC-001", "tier": TIER_HUMAN,
+                      "clause": "evidence.completeness", "fix": "run QC before judging"})
+    elif not tech.get("file_valid"):
         flags.append({"code": "F_INVALID_FILE", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "deliverable.format", "fix": "re-upload valid WAV"})
     if tech.get("clipping_detected"):
         flags.append({"code": "F_CLIPPING", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "acceptance.no_clipping", "fix": "correction round"})
-    if not tech.get("noise_threshold_passed", True):
+    if "noise_threshold_passed" not in tech and "file_valid" in tech:
+        flags.append({"code": "F_UNKNOWN_NOISE", "rule": "QC-001", "tier": TIER_HUMAN,
+                      "clause": "evidence.completeness", "fix": "run QC before judging"})
+    elif not tech.get("noise_threshold_passed", True):
         flags.append({"code": "F_NOISE", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "acceptance.no_excessive_noise", "fix": "correction round"})
-    cov = align.get("coverage_estimate", 1.0)
+    if "coverage_estimate" not in align:
+        flags.append({"code": "F_UNKNOWN_ALIGN", "rule": "QC-002", "tier": TIER_HUMAN,
+                      "clause": "evidence.completeness", "fix": "run alignment before judging"})
+        cov = 1.0
+    else:
+        cov = align.get("coverage_estimate", 1.0)
     if cov < 0.9:
         flags.append({"code": "F_INCOMPLETE", "rule": "QC-002", "tier": TIER_ASSISTED,
                       "clause": "acceptance.all_passages", "fix": "correction round",

@@ -9,13 +9,25 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 
 import sys
 sys.path.insert(0, ".")
 from hv import auth as hv_auth
 from hv import contracts as C
 from hv import series as SE
+from hv import upload as UPL
+from hv.sessions import SessionStore
+from hv.util import utcnow as utcnow_now
+
+SESS = SessionStore(os.getenv("HV_SESSIONS_DB", "data/hv-sessions.db"))
+
+
+def _narrator(x_hv_session: str | None) -> str:
+    nid = SESS.narrator_for(x_hv_session or "")
+    if not nid:
+        raise HTTPException(401, "narrator session required")
+    return nid
 from hv import disputes as D
 from hv import escrow as E
 from hv import ledger as L
@@ -50,19 +62,24 @@ def google_start():
     if not hv_auth.configured():
         raise HTTPException(501, "sign-in not configured yet")
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(hv_auth.authorize_url(), status_code=302)
+    return RedirectResponse(hv_auth.authorize_url(SESS.issue_state()), status_code=302)
 
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str = "", state: str = ""):
     if not code:
         raise HTTPException(400, "missing code")
+    if not SESS.consume_state(state):
+        raise HTTPException(400, "bad or expired state")
     try:
         profile = hv_auth.exchange(code)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
-    return {"sub": profile.get("sub"), "email": profile.get("email"),
-            "name": profile.get("name"),
+    nid = "nar_" + (profile.get("sub") or "")[-8:]
+    HANDLES[nid] = nid
+    token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
+    return {"narrator_id": nid, "email": profile.get("email"),
+            "session": token,
             "note": "first user: owner claims narrator nar_001"}
 
 
@@ -75,6 +92,15 @@ def by_handle(handle: str):
 
 
 SERIES: dict[str, dict] = {}
+STORE = None
+
+
+def _store():
+    global STORE
+    if STORE is None:
+        from hv.series_store import SeriesStore
+        STORE = SeriesStore(os.getenv("HV_SERIES_DB", "data/hv-series.db"))
+    return STORE
 
 
 @app.post("/v1/series")
@@ -88,6 +114,7 @@ def create_series(body: dict[str, Any], x_hv_agent_key: str | None = Header(None
                          body["episodes"], body.get("minutes_each", 10),
                          body["price_each"])
     SERIES[m["master_id"]] = {"master": m, "series": s}
+    _store().save(m, s)
     _ev(m["master_id"], "series.created",
         {"episodes": body["episodes"], "total": s["total_value"]},
         ag["agent_id"], "agent")
@@ -96,7 +123,7 @@ def create_series(body: dict[str, Any], x_hv_agent_key: str | None = Header(None
 
 @app.get("/v1/series/{mid}/progress")
 def series_progress(mid: str):
-    e = SERIES.get(mid)
+    e = SERIES.get(mid) or _store().load(mid)
     if not e:
         raise HTTPException(404, "unknown series")
     return SE.series_health(e["series"])
@@ -153,25 +180,27 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
 
 
 @app.post("/v1/offers/{cid}/accept")
-def accept_offer(cid: str, body: dict[str, Any]):
+def accept_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Header(None)):
+    nid = _narrator(x_hv_session)
     c = contracts.get(cid)
     if not c:
         raise HTTPException(404, "unknown contract")
     try:
-        C.accept(c, body["narrator_id"], funded=(c.funding_status == "secured"))
+        C.accept(c, nid, funded=(c.funding_status == "secured"))
     except ValueError as e:
         raise HTTPException(409, str(e))
-    _ev(cid, "offer.accepted", {"narrator": c.narrator_id}, c.narrator_id, "narrator")
+    _ev(cid, "offer.accepted", {"narrator": nid}, nid, "narrator")
     _ev(cid, "contract.activated", {"deadline": c.deadline_at})
     return {"contract": c.to_dict()}
 
 
 @app.post("/v1/offers/{cid}/decline")
-def decline_offer(cid: str, body: dict[str, Any]):
+def decline_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Header(None)):
+    nid = _narrator(x_hv_session)
     c = contracts.get(cid)
     if not c:
         raise HTTPException(404, "unknown contract")
-    _ev(cid, "offer.declined", {"by": body.get("narrator_id", "?")}, "narrator", "narrator")
+    _ev(cid, "offer.declined", {"by": nid}, nid, "narrator")
     return {"ok": True, "penalty": "none"}
 
 
@@ -190,14 +219,41 @@ def contract_events(cid: str):
 
 
 @app.post("/v1/contracts/{cid}/submissions")
-def submit(cid: str, body: dict[str, Any]):
+async def submit(cid: str, request: Request):
+    import json as _json
+    from pathlib import Path as _P
     c = contracts.get(cid)
     if not c or c.status != "accepted":
         raise HTTPException(409, "contract not in accepted state")
-    sub = {"submission_id": uid("sub_"), "sha256": body.get("sha256", ""),
-           "received_at": __import__("hv.util", fromlist=["utcnow"]).utcnow()}
+    body: bytes = await request.body()
+    ctype = request.headers.get("content-type", "")
+    if ctype.startswith("audio/") or body[:4] == b"RIFF":
+        try:
+            receipt = UPL.store_upload(body, cid)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    else:
+        try:
+            payload = _json.loads(body or b"{}")
+        except Exception:
+            raise HTTPException(422, "send WAV bytes or JSON with sha256 of an uploaded file")
+        claimed = payload.get("sha256", "")
+        if not claimed or not _P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), claimed + ".wav").exists():
+            raise HTTPException(422, "unknown upload hash — upload bytes first")
+        receipt = {"sha256": claimed, "r2_key": f"audio/raw/{claimed}.wav",
+                   "received_at": utcnow_now(), "contract_id": cid, "deduplicated": True}
+    sub = {"submission_id": uid("sub_"), **receipt}
     c.status = "submitted"
     _ev(cid, "submission.received", sub, c.narrator_id, "narrator")
+    from hv import qc as _qc
+    from pathlib import Path as _P2
+    fpath = str(_P2(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), receipt["sha256"] + ".wav"))
+    try:
+        tech = _qc.tech_checks(fpath)
+    except Exception as e:
+        tech = {"file_valid": False, "error": str(e)[:100]}
+    _ev(cid, "qc.completed", {"submission": sub["submission_id"], "technical": tech})
+    sub["qc_technical"] = tech
     return sub
 
 
