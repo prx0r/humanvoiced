@@ -20,7 +20,7 @@ def test_checkout_floor_and_batch():
     assert P.quote(0.25)["customer_price"] == 3.50
     assert P.quote(0.25, batched=True)["customer_price"] == 2.15
     q = P.quote(10)
-    assert q["customer_price"] == 10.0 and q["narrator_payout"] == 7.5
+    assert q["customer_price"] == 10.0 and q["narrator_payout"] == 10.0
 
 
 def test_duration_from_words():

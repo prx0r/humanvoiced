@@ -8,7 +8,7 @@ from hv import pricing as P
 
 def test_pilot_split():
     s = P.pilot_split()
-    assert s == {"creator_price": 11.0, "narrator_payout": 8.0, "platform_share": 3.0}
+    assert s == {"creator_price": 11.0, "narrator_payout": 11.0, "platform_share": 0.0}
 
 
 def test_effort_guard():

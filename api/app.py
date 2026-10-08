@@ -124,7 +124,7 @@ def google_start():
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str = "", state: str = ""):
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import RedirectResponse
     if not code:
         raise HTTPException(400, "missing code")
     if not SESS.consume_state(state):
@@ -139,7 +139,7 @@ def google_callback(code: str = "", state: str = ""):
                           "handle": "", "languages": [], "prefs": {},
                           "samples": [], "created": utcnow_now()})
     token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
-    resp = JSONResponse({"narrator_id": nid, "email": profile.get("email")})
+    resp = RedirectResponse("https://humanvoiced.com/onboard.html?login=ok", status_code=302)
     resp.set_cookie("hv_session", token, httponly=True, secure=True,
                     samesite="lax", max_age=30 * 86400, path="/",
                     domain=".humanvoiced.com")
@@ -199,7 +199,15 @@ def payout_prefs(body: dict[str, Any], x_hv_session: str | None = Header(None)):
 @app.get("/v1/transparency")
 def transparency():
     from hv import stablecoin as _sc
-    return _sc.Transparency().public()
+    t = _sc.Transparency()
+    for kind, amount, country in DB.fin_sums():
+        if kind == "fee":
+            t.record_fee(amount / 100, country or "?")
+        elif kind == "contribution":
+            t.record_contribution(amount / 100)
+        elif kind == "expense":
+            t.record_expense(amount / 100, "")
+    return t.public()
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import profile_draft as _pd
@@ -207,21 +215,49 @@ def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     doc = DB.get_narrator(nid) or {"id": nid}
     if body.get("publish"):
         pub = _pd.publish(doc, body.get("profile", {}))
+        consent = set(body.get("consent_samples", []))
+        for s in doc.get("samples", []):
+            if isinstance(s, dict):
+                s["consented_public"] = s.get("sha256") in consent
         DB.save_narrator(doc)
         _ev(nid, "profile.published", {"handle": pub.get("display_name", "")}, nid, "narrator")
         return {"published": pub}
-    if body.get("draft_from_tech"):
-        draft = _pd.draft_from_sample(body.get("tech", {}), body,
-                                      body.get("wpm"))
+    if body.get("draft_from_tech") or body.get("draft_from_sample"):
+        latest = (doc.get("samples", []) or [{}])[-1]
+        stored = latest.get("analysis", {}) if isinstance(latest, dict) else {}
+        tech = {"peak": (stored.get("acoustic") or {}).get("peak", 0),
+                "silence_ratio": 1 - (stored.get("acoustic") or {}).get("speech_fraction", 1),
+                "clipping": bool((stored.get("acoustic") or {}).get("clipping_detected"))}
+        draft = _pd.draft_from_sample(tech, body, None)
+        draft["analysis_ref"] = latest.get("sha256") if isinstance(latest, dict) else ""
         doc["profile_draft"] = draft
         DB.save_narrator(doc)
         return {"draft": draft}
     doc.update({"handle": body.get("handle", doc.get("handle", "")),
                 "languages": body.get("languages", doc.get("languages", [])),
                 "prefs": body.get("prefs", doc.get("prefs", {}))})
+    import re as _re
+    if doc.get("handle") and not _re.fullmatch(r"[A-Za-z0-9_.-]{2,30}", doc["handle"]):
+        raise HTTPException(422, "handle must be 2-30 chars: letters, numbers, _.-")
     DB.save_narrator(doc)
     _ev(nid, "profile.updated", {"handle": doc["handle"]}, nid, "narrator")
     return doc
+
+
+def _analyze_sample(body: bytes, tx: dict) -> dict:
+    """Real analysis on stored bytes: VAD + acoustic + transcript merge."""
+    from hv import audio as _au
+    import io as _io
+    import struct as _st
+    import wave as _wv
+    try:
+        with _wv.open(_io.BytesIO(body), "rb") as _w:
+            _n, _ch, _sr = _w.getnframes(), _w.getnchannels(), _w.getframerate()
+            _raw = _w.readframes(_n)
+            _frames = [x[0] / 32768 for x in _st.iter_unpack("<h", _raw[::_ch * 2] or b"\x00\x00")]
+        return _au.analyze(_frames[:_sr * 120], _sr, tx.get("text", ""), "")
+    except Exception as e:
+        return {"error": str(e)[:100]}
 
 
 @app.post("/v1/narrators/me/sample")
@@ -245,7 +281,9 @@ async def my_sample(request: Request, x_hv_session: str | None = Header(None)):
         raise HTTPException(409, "sample cap reached (1 base + 10 extras)")
     doc.setdefault("samples", []).append({"sha256": receipt["sha256"],
                                           "language": language, "kind": kind,
-                                          "transcript_words": len(tx.get("text", "").split())})
+                                          "consented_public": False,
+                                          "transcript_words": len(tx.get("text", "").split()),
+                                          "analysis": _analyze_sample(body, tx)})
     if language not in doc.get("languages", []):
         doc["languages"] = doc.get("languages", []) + [language]
     DB.save_narrator(doc)
@@ -293,14 +331,19 @@ def demand_templates():
 
 @app.post("/v1/orders/guest")
 def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
-    """Guest checkout record: no buyer account; high-entropy order credential.
-    Payout shows 100% to narrator, 0% commission (processor fees are platform cost)."""
+    """Guest checkout: proven by funding intent, not by login. The intent
+    idempotency key is the payment proof; agent key optional context."""
     import secrets as _s
     import sqlite3 as _sq
-    ag = _agent(x_hv_agent_key)
     c = DB.get_contract(body.get("contract_id", ""))
-    if not c or c.get("agent_id") != ag["agent_id"]:
-        raise HTTPException(403, "unknown or foreign contract")
+    if not c:
+        raise HTTPException(404, "unknown contract")
+    intent = DB.get_intent(c["contract_id"])
+    if not intent or intent.get("intent_id") != body.get("funding_intent"):
+        raise HTTPException(402, "no verified funding for this contract")
+    ag = AGENTS.get(x_hv_agent_key or "", None)
+    if ag and ag["agent_id"] != c.get("agent_id"):
+        raise HTTPException(403, "foreign agent")
     oid = "ord_" + _s.token_hex(8)
     cred = _s.token_urlsafe(24)
     conn = _sq.connect(str(DB.db_path), timeout=30)
@@ -309,7 +352,8 @@ def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None))
          "narrator_payout": c["payout_usd"], "commission": 0.0})))
     conn.commit()
     conn.close()
-    _ev(c["contract_id"], "order.created", {"order_id": oid}, ag["agent_id"], "agent")
+    _ev(c["contract_id"], "order.created", {"order_id": oid},
+        (ag["agent_id"] if ag else "guest"), "agent" if ag else "guest")
     return {"order_id": oid, "url": f"https://humanvoiced.com/orders/{oid}",
             "access_credential": cred, "narrator_payout": c["payout_usd"],
             "commission": 0.0,
@@ -319,14 +363,20 @@ def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None))
 @app.post("/v1/voices/search")
 def voices_search(body: dict[str, Any]):
     from hv import catalog as _cat
+    prefs = body.get("preferences", {})
     catalog = []
     for n in DB.list_narrators():
-        catalog.append({"voice_id": f"hv_voice_{n['id']}", "handle": n.get("handle", ""),
+        feats = dict(n.get("match_features", {}))
+        if prefs.get("prosody") and prefs["prosody"] in str(feats.get("prosody", "")):
+            feats["perceptual"] = min(1.0, feats.get("perceptual", 0.5) + 0.2)
+        if prefs.get("energy") and prefs["energy"] == feats.get("energy"):
+            feats["delivery"] = min(1.0, feats.get("delivery", 0.5) + 0.2)
+        catalog.append({"voice_id": n["id"], "handle": n.get("handle", ""),
                         "languages": n.get("languages", []),
                         "capabilities": {"declared": n.get("prefs", {}).get("categories", []),
                                          "demonstrated": []},
                         "availability": {"accepting_offers": True, "max_minutes_per_job": 60},
-                        "match_features": n.get("match_features", {}),
+                        "match_features": feats,
                         "reliability": n.get("reliability")})
     return {"matches": _cat.search(catalog, body, body.get("limit", 5))}
 
@@ -337,10 +387,13 @@ def voice_sample(nid: str, sha: str = ""):
     n = DB.get_narrator(nid)
     if not n:
         raise HTTPException(404, "unknown narrator")
-    samples = n.get("samples", [])
-    target = sha or (samples[0]["sha256"] if samples and isinstance(samples[0], dict) else samples[0] if samples else "")
+    samples = [s for s in n.get("samples", [])
+               if isinstance(s, dict) and s.get("consented_public")]
+    if sha and not any(s.get("sha256") == sha for s in samples):
+        raise HTTPException(403, "sample not public")
+    target = sha or (samples[0]["sha256"] if samples else "")
     if not target:
-        raise HTTPException(404, "no samples")
+        raise HTTPException(404, "no public samples")
     from pathlib import Path as _P
     f = _P(os.getenv("HV_AUDIO_DIR", "data/audio/raw"), target + ".wav")
     if not f.exists():
@@ -375,7 +428,7 @@ def casting_create(body: dict[str, Any], x_hv_agent_key: str | None = Header(Non
                                body.get("side_text", ""), body.get("deadline_at", ""))
     except ValueError as e:
         raise HTTPException(422, str(e))
-    CASTINGS[call["casting_id"]] = call
+    CASTINGS[call["casting_id"]] = {**call, "agent_id": ag["agent_id"]}
     _ev(call["casting_id"], "casting.opened", {"role": call["role"]}, ag["agent_id"], "agent")
     return call
 
@@ -400,10 +453,12 @@ async def casting_submit(cid: str, request: Request, x_hv_session: str | None = 
 @app.get("/v1/casting/{cid}/compare")
 def casting_compare(cid: str, x_hv_agent_key: str | None = Header(None)):
     from hv import audition as _a
-    _agent(x_hv_agent_key)
+    ag = _agent(x_hv_agent_key)
     call = CASTINGS.get(cid)
     if not call:
         raise HTTPException(404, "unknown casting")
+    if call.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "another agent's casting")
     return {"entries": _a.compare(call)}
 
 
@@ -414,12 +469,29 @@ def casting_decide(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = 
     call = CASTINGS.get(cid)
     if not call:
         raise HTTPException(404, "unknown casting")
+    if call.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "another agent's casting")
     try:
         out = _a.decide(call, body.get("winner_id", ""), body.get("notes", ""))
     except ValueError as e:
         raise HTTPException(422, str(e))
     _ev(cid, "casting.decided", {"winner": out["winner"]}, ag["agent_id"], "agent")
     return out
+
+
+@app.post("/v1/agents/provision")
+def provision_agent(body: dict[str, Any]):
+    """Bootstrap agent keys. Gated by HV_ADMIN_TOKEN env (never default)."""
+    import secrets as _s
+    admin = os.getenv("HV_ADMIN_TOKEN", "")
+    if not admin or body.get("admin_token") != admin:
+        raise HTTPException(403, "admin only")
+    key = "hvag_" + _s.token_hex(16)
+    AGENTS[key] = {"agent_id": body.get("agent_id", "agent_" + _s.token_hex(4)),
+                   "principal_id": body.get("principal_id", ""),
+                   "max_job_minor": int(body.get("max_job_minor", 3000)),
+                   "max_daily_minor": int(body.get("max_daily_minor", 100000))}
+    return {"agent_key": key, "agent_id": AGENTS[key]["agent_id"]}
 
 
 @app.get("/v1/voices/by-handle/{handle}")
@@ -436,8 +508,14 @@ def portfolio(nid: str):
     if not n:
         raise HTTPException(404, "unknown narrator")
     r = reps.get(nid, R.ReputationVector(nid))
+    pub = (n.get("profile_published") or {})
     return {"narrator_id": nid, "handle": n.get("handle", ""),
-            "languages": n.get("languages", []), "samples": n.get("samples", []),
+            "languages": n.get("languages", []),
+            "profile": {k: pub.get(k) for k in ("display_name", "bio", "categories")},
+            "samples": [{"sha256": s.get("sha256"), "language": s.get("language"),
+                         "kind": s.get("kind", "natural")}
+                        for s in n.get("samples", [])
+                        if isinstance(s, dict) and s.get("consented_public")],
             "reputation": r.to_dict()}
 
 
@@ -483,9 +561,9 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
             raise HTTPException(402, why)
     c, priced = _quote_for(brief, ag)
     today = _dt.date.today().isoformat()
-    DB.add_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100))
-    if DB.day_spend(ag["agent_id"], today) > ag.get("max_daily_minor", 10**12):
+    if DB.day_spend(ag["agent_id"], today) + priced["narrator_payout"] * 100 > ag.get("max_daily_minor", 10**12):
         raise HTTPException(402, "exceeds agent daily budget")
+    DB.add_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100))
     script = brief.get("script_text", "")
     DB.save_script(script)
     if not ALLOW_SIMULATED:
@@ -509,17 +587,23 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
 
 @app.post("/v1/offers/{cid}/accept")
 def accept_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Header(None)):
+    from hv import globalx as _gx
     nid = _narrator(x_hv_session)
-    c = DB.get_contract(cid)
+    c = DB.accept_atomic(cid, nid)
     if not c:
-        raise HTTPException(404, "unknown contract")
-    if not DB.is_offered(cid, nid):
-        raise HTTPException(403, "offer was not dispatched to you")
+        cur = DB.get_contract(cid)
+        if not cur:
+            raise HTTPException(404, "unknown contract")
+        raise HTTPException(409, "offer unavailable (taken, unassigned, or wrong state)")
     obj = C.HVContract(**{k: c[k] for k in C.HVContract().__dict__ if k in c})
     try:
         C.accept(obj, nid, funded=(c["funding_status"] == "secured"))
     except ValueError as e:
         raise HTTPException(409, str(e))
+    ndoc = DB.get_narrator(nid) or {}
+    ok, why = _gx.bookable_in((ndoc.get("country") or ""))
+    if ndoc.get("country") and not ok:
+        raise HTTPException(402, why)
     c.update(obj.to_dict())
     DB.save_contract(c)
     _ev(cid, "offer.accepted", {"narrator": nid}, nid, "narrator")

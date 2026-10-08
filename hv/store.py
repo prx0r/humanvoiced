@@ -118,6 +118,62 @@ class Store:
         conn.close()
         return json.loads(row[0]) if row else None
 
+    def accept_atomic(self, cid: str, nid: str) -> dict | None:
+        """Exclusive claim: only offered contracts, one winner. Returns doc or None."""
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT doc FROM contracts WHERE id=?", (cid,)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            import json as _j
+            c = _j.loads(row[0])
+            if c.get("status") not in ("offered", "proposed"):
+                conn.rollback()
+                return None
+            off = conn.execute("SELECT 1 FROM offers WHERE contract_id=? AND narrator_id=?",
+                               (cid, nid)).fetchone()
+            if not off:
+                conn.rollback()
+                return None
+            conn.execute("DELETE FROM offers WHERE contract_id=? AND narrator_id!=?", (cid, nid))
+            conn.commit()
+            return c
+        finally:
+            conn.close()
+
+    def set_status(self, cid: str, status: str, extra: dict | None = None):
+        conn = self._conn()
+        import json as _j
+        row = conn.execute("SELECT doc FROM contracts WHERE id=?", (cid,)).fetchone()
+        if not row:
+            conn.close()
+            return
+        c = _j.loads(row[0])
+        c["status"] = status
+        if extra:
+            c.update(extra)
+        conn.execute("UPDATE contracts SET doc=? WHERE id=?", (_j.dumps(c), cid))
+        conn.commit()
+        conn.close()
+
+    def record_fin(self, kind: str, amount_minor: int, country: str = ""):
+        conn = self._conn()
+        conn.execute("CREATE TABLE IF NOT EXISTS fin (kind TEXT, amount_minor INT, country TEXT)")
+        conn.execute("INSERT INTO fin VALUES (?, ?, ?)", (kind, amount_minor, country))
+        conn.commit()
+        conn.close()
+
+    def fin_sums(self) -> dict:
+        conn = self._conn()
+        try:
+            rows = conn.execute("SELECT kind, SUM(amount_minor), country FROM fin GROUP BY kind, country").fetchall()
+        except Exception:
+            rows = []
+        conn.close()
+        return rows
+
     def save_case(self, doc: dict):
         conn = self._conn()
         conn.execute("INSERT OR REPLACE INTO cases VALUES (?, ?)", (doc["case_id"], json.dumps(doc)))

@@ -21,8 +21,10 @@ class PaymentService:
         return {"rail": rail_name, "asset": caps["asset"], "network": caps["network"],
                 **Q.fee_breakdown(contract["payout_usd"])}
 
-    def fund(self, contract: dict, rail_name: str) -> dict:
+    def fund(self, contract: dict, rail_name: str, test: bool = False) -> dict:
         ad = self.adapters[rail_name]
+        if not ad.capabilities().get("production_enabled") and not test:
+            raise ValueError(f"{rail_name} not production-ready; pass test=True for testnet only")
         if not ad.capabilities().get("supports_protected_funding"):
             raise ValueError(f"{rail_name} cannot protected-fund; refusing escrow claim")
         return ad.create_intent(contract)

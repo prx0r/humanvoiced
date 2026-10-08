@@ -106,8 +106,11 @@ def test_profile_draft_publish_and_guest_order():
     assert p.json()["published"].get("nationality") is None
     r = c.post("/v1/contracts", json={"script_text": "hello world " * 40, "narrator_ids": ["nar_041"]}, headers=H)
     cid = r.json()["contract"]["contract_id"]
-    g = c.post("/v1/orders/guest", json={"contract_id": cid}, headers=H)
+    funding = r.json()["funding"]
+    g = c.post("/v1/orders/guest", json={"contract_id": cid, "funding_intent": funding}, headers=H)
     assert g.json()["commission"] == 0.0 and g.json()["url"].startswith("https://humanvoiced.com/orders/")
+    bad = c.post("/v1/orders/guest", json={"contract_id": cid, "funding_intent": "nope"}, headers=H)
+    assert bad.status_code == 402
     lo = c.post("/api/auth/logout", headers=NH)
     assert lo.json() == {"ok": True}
 

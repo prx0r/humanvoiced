@@ -36,7 +36,7 @@ what was going on, and that was the strange part.</p>
 
 <div class="step" id="s3">
 <h2>3 · Review your AI profile, then publish</h2>
-<p><button id="draft" disabled>Generate my profile draft</button></p>
+<p><button id="draft">Generate my profile draft</button></p>
 <pre id="draftout" style="background:#f6f6f6;padding:1rem;white-space:pre-wrap"></pre>
 <p><button id="publish" disabled>Publish my portfolio</button> <span id="portlink"></span></p>
 </div>
@@ -103,14 +103,13 @@ async function authedFetch(url, opts = {}) {
 
 document.getElementById('draft').onclick = async () => {
   if (!wavBlob) { msg('Record first.'); return; }
-  if (!session) { msg('Sign in first.'); return; }
   const up = await fetch(API + '/v1/narrators/me/sample', {
     method: 'POST', headers: {'Content-Type': 'audio/wav'}, body: wavBlob, credentials: 'include'});
+  if (up.status === 401) { msg('Sign in first.'); return; }
   if (!up.ok) { msg('Upload failed.'); return; }
   const draft = await authedFetch(API + '/v1/narrators/me/profile', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({draft_from_tech: true, tech: {peak: 15000, silence_ratio: 0.1},
-      display_name: '', languages: ['en'], categories: ['narration']})});
+    body: JSON.stringify({draft_from_sample: true})});
   document.getElementById('draftout').textContent = JSON.stringify(draft.draft, null, 2);
   document.getElementById('publish').disabled = false;
   done('s2'); msg('Edit anything below in your head — publish when it reads true.');

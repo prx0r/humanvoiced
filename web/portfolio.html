@@ -4,6 +4,7 @@
 <body>
 <div id="p">Loading…</div>
 <script>
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const API = 'https://api.humanvoiced.com';
 (async () => {
   const h = new URLSearchParams(location.search).get('h') || 'alex';
@@ -17,12 +18,13 @@ const API = 'https://api.humanvoiced.com';
   const rep = prof.reputation || {};
   const vec = rep.vector || {};
   const samps = prof.samples || [];
-  box.innerHTML = `<h1>${prof.handle || prof.narrator_id}</h1>
-    <p>${(prof.languages || []).join(' · ')}</p>
+  box.innerHTML = `<h1>${esc(prof.handle || prof.narrator_id)}</h1>
+    <p>${(prof.languages || []).map(esc).join(' · ')}</p>
     <h2>Samples (${samps.length})</h2>` +
     samps.map((s, i) => {
-      const sha = s.sha256 || s, kind = s.kind || 'natural';
-      return `<p><b>${kind}</b><br><audio controls preload="none" src="${API}/v1/voices/${prof.narrator_id}/sample?sha=${sha}"></audio></p>`;
+      const sha = String(s.sha256 || s), kind = s.kind || 'natural';
+      if (!/^[0-9a-f]{64}$/.test(sha)) return '';
+      return `<p><b>${esc(kind)}</b><br><audio controls preload="none" src="${API}/v1/voices/${esc(prof.narrator_id)}/sample?sha=${sha}"></audio></p>`;
     }).join('') +
     `<h2>Record</h2><p>Jobs ${rep.completed || 0} · on-time ${vec.D ?? '—'} · quality ${vec.Q ?? '—'}</p>
     <p><a href="/onboard.html">Get your own voice page</a></p>`;

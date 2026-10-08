@@ -13,7 +13,7 @@ from __future__ import annotations
 
 BASE = 1.0
 CHECKOUT_MIN = 3.50
-NARRATOR_SHARE = 0.75
+NARRATOR_SHARE = 1.0
 NARRATOR_MIN_PAYOUT = 2.25
 WORDS_PER_MINUTE = 150
 
@@ -61,8 +61,8 @@ def duration_from_words(words: int, wpm: int = WORDS_PER_MINUTE) -> float:
 # Pilot economics (LAUNCH.md §5): fixed $8 narrator / $3 platform on the $11
 # 10-minute product. Effort guard: if median effort for 10 finished minutes
 # exceeds 40 narrator-minutes, the product needs repricing.
-PILOT_NARRATOR_USD = 8.00
-PILOT_PLATFORM_USD = 3.00
+PILOT_NARRATOR_USD = 11.00
+PILOT_PLATFORM_USD = 0.0
 EFFORT_GUARD_MINUTES_PER_10 = 40.0
 
 

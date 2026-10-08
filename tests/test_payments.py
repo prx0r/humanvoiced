@@ -29,8 +29,13 @@ def test_capability_honesty():
             assert False, name
         except (ValueError, KeyError):
             pass
-    ok = svc.fund({"contract_id": "hvc_1", "payout_usd": 10}, "stellar_usdc_trustless_work_v1")
+    ok = svc.fund({"contract_id": "hvc_1", "payout_usd": 10}, "stellar_usdc_trustless_work_v1", test=True)
     assert ok["state"] == "testnet_intent"
+    try:
+        svc.fund({"contract_id": "hvc_1", "payout_usd": 10}, "stellar_usdc_trustless_work_v1")
+        assert False, "production rail without test flag"
+    except ValueError:
+        pass
 
 
 def test_demand_templates_match_agents():
