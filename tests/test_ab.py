@@ -31,3 +31,12 @@ def test_multilingual_matrix():
         lambda fr, sr, lang: "hello world" if lang == "en" else "")
     assert [r["language"] for r in m] == ["en", "hi"]
     assert m[0]["empty"] is False and m[1]["empty"] is True
+
+
+def test_providers_map():
+    import os
+    from hv import providers as PR
+    assert "transcribe" in PR.PROVIDERS and "synthesize" in PR.PROVIDERS
+    a = PR.available()
+    assert a["transcribe"] == "cf-whisper-turbo"
+    assert set(a) == {"transcribe", "describe", "translate", "synthesize", "realtime", "reason", "notes"}
