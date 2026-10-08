@@ -13,6 +13,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 import sys
 sys.path.insert(0, ".")
+from hv import auth as hv_auth
 from hv import contracts as C
 from hv import disputes as D
 from hv import escrow as E
@@ -40,6 +41,27 @@ def _agent(key: str | None) -> dict:
 
 def _ev(cid: str, typ: str, payload: dict, actor="platform", atype="system"):
     return led.append(cid, typ, payload, actor, atype)
+
+
+@app.get("/api/auth/google/start")
+def google_start():
+    if not hv_auth.configured():
+        raise HTTPException(501, "sign-in not configured yet")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(hv_auth.authorize_url(), status_code=302)
+
+
+@app.get("/api/auth/google/callback")
+def google_callback(code: str = "", state: str = ""):
+    if not code:
+        raise HTTPException(400, "missing code")
+    try:
+        profile = hv_auth.exchange(code)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    return {"sub": profile.get("sub"), "email": profile.get("email"),
+            "name": profile.get("name"),
+            "note": "first user: owner claims narrator nar_001"}
 
 
 @app.get("/v1/voices")
