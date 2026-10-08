@@ -14,6 +14,21 @@ TIER_AUTO = "tier1_automated"
 TIER_ASSISTED = "tier2_assisted"
 TIER_HUMAN = "tier3_human"
 
+# Published rule IDs (LIBRARY.md §7). Agents may cite, never invent.
+RULES = {
+    "PAY-001": "funds not secured → no actionable contract",
+    "SLA-001": "offer expires unaccepted → close, no penalty",
+    "SLA-002": "deadline missed → notify, preserve logs, recovery",
+    "SLA-003": "platform outage → suspend deadline penalty",
+    "QC-001": "undecodable upload → ask replacement",
+    "QC-002": "alignment gaps → flag exact passages",
+    "REV-001": "locked script changed → require amendment",
+    "PAY-002": "valid delivery accepted → authorise release",
+    "PAY-003": "review window expires silent → authorise if policy permits",
+    "DIS-001": "substantive dispute → freeze settlement, escalate",
+    "REP-001": "confirmed worker fault → update reliability after review rights",
+}
+
 
 def evaluate(report: dict, timeline: dict) -> list[dict]:
     """Deterministic flags from the QC report + server timeline. No LLM."""
@@ -21,31 +36,31 @@ def evaluate(report: dict, timeline: dict) -> list[dict]:
     tech = report.get("technical", {})
     align = report.get("script_alignment", {})
     if not tech.get("file_valid"):
-        flags.append({"code": "F_INVALID_FILE", "tier": TIER_ASSISTED,
+        flags.append({"code": "F_INVALID_FILE", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "deliverable.format", "fix": "re-upload valid WAV"})
     if tech.get("clipping_detected"):
-        flags.append({"code": "F_CLIPPING", "tier": TIER_ASSISTED,
+        flags.append({"code": "F_CLIPPING", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "acceptance.no_clipping", "fix": "correction round"})
     if not tech.get("noise_threshold_passed", True):
-        flags.append({"code": "F_NOISE", "tier": TIER_ASSISTED,
+        flags.append({"code": "F_NOISE", "rule": "QC-001", "tier": TIER_ASSISTED,
                       "clause": "acceptance.no_excessive_noise", "fix": "correction round"})
     cov = align.get("coverage_estimate", 1.0)
     if cov < 0.9:
-        flags.append({"code": "F_INCOMPLETE", "tier": TIER_ASSISTED,
+        flags.append({"code": "F_INCOMPLETE", "rule": "QC-002", "tier": TIER_ASSISTED,
                       "clause": "acceptance.all_passages", "fix": "correction round",
                       "missing": align.get("potential_missing_segments", [])})
     if timeline.get("late"):
-        flags.append({"code": "F_LATE", "tier": TIER_HUMAN,
+        flags.append({"code": "F_LATE", "rule": "SLA-002", "tier": TIER_HUMAN,
                       "clause": "sla.deadline", "fix": "grace/recovery review"})
     if timeline.get("no_submission_after_grace"):
-        flags.append({"code": "F_NON_DELIVERY", "tier": TIER_HUMAN,
+        flags.append({"code": "F_NON_DELIVERY", "rule": "SLA-002", "tier": TIER_HUMAN,
                       "clause": "sla.delivery", "fix": "reassign + reliability review"})
     if timeline.get("platform_outage"):
-        flags.append({"code": "F_PLATFORM", "tier": TIER_ASSISTED,
+        flags.append({"code": "F_PLATFORM", "rule": "SLA-003", "tier": TIER_ASSISTED,
                       "clause": "sla.platform_failure", "fix": "extend deadline, no penalty"})
     style = report.get("style", {})
     if style.get("finding") == "likely_mismatch" and style.get("confidence", 0) > 0.85:
-        flags.append({"code": "F_STYLE", "tier": TIER_HUMAN,
+        flags.append({"code": "F_STYLE", "rule": "DIS-001", "tier": TIER_HUMAN,
                       "clause": "brief.delivery_style", "fix": "human assessment vs brief"})
     return flags
 

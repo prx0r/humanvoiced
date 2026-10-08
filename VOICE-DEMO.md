@@ -1,29 +1,36 @@
 # VOICE DEMO — the 30-second readout
 
-## Tier 1 — required: "Please Call Stella" (verbatim, ~28s)
+## Tier 1 — casting sample: "Alex at the café" (~30–35s, LIBRARY.md §2)
 
-> Please call Stella. Ask her to bring these things with her from the store:
-> Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe
-> a snack for her brother Bob. We also need a small plastic snake and a big
-> toy frog for the kids. She can scoop these things into three red bags, and
-> we will go meet her Wednesday at the train station.
+> Last Thursday morning, Alex walked into a little café beside the railway
+> station. The rain had finally stopped, but the streets were still shining.
+>
+> At seven forty-five, a woman in a bright blue jacket asked, "Have you
+> heard the news?"
+>
+> Alex laughed. "Not yet. What happened?"
+>
+> By lunchtime, twenty-three people had gathered outside. Nobody quite knew
+> what was going on, and that was the strange part.
+>
+> Sometimes an ordinary day becomes a story you'll remember for years.
 
-Why this verse: the Speech Accent Archive elicitation paragraph — 2,140
-speakers, 177 countries, the cross-accent standard (also in VCTK + PATSY).
-69 words, ~28s conversational pace. Engineered phonetic coverage (sibilants,
-plosives, r/l contrasts, vowel space) that exposes accent, articulation and
-recording quality in one take. Our GoP-style pronunciation scoring and accent
-descriptors calibrate against the same passage, so narrator ↔ archive
-comparisons are apples-to-apples. Do not paraphrase it — comparability is
-the point.
+Read naturally. Don't perform or exaggerate an accent. One sample gets you
+listed. Tests: narration cadence, Q&A intonation, consonants
+(Thursday/three/shining), numbers/times, breath pacing, closing a thought.
+Non-English: separately authored native equivalents, never translations.
 
-## Tier 2 — optional (+30s): natural + commercial + character
+## Tier 1b — accent ID: "Please Call Stella" (~28s, optional at onboarding)
 
-1. Rainbow Passage opening (prosody, long-form stamina read).
-2. One commercial line, e.g. "Odd little gifts for the things they're
-   obsessed with — personalised and delivered." (ad-suitability probe).
-3. One character line in the narrator's claimed voice (character-voice track
-   only; unlocks character listings).
+The Speech Accent Archive elicitation paragraph (2,140 speakers, VCTK
+corpus): phonetic coverage engineered for accent/articulation analysis.
+Required when claiming a specific accent listing (e.g. russian-accent jobs);
+calibrates our GoP scoring against the archive. Verbatim only.
 
-Tier 1 gates listing. Tier 2 unlocks template eligibility (youtube/ads/
-character). Re-record on new mic/room; descriptors versioned per sample.
+## Tier 2 — optional (+30s): commercial + character
+
+Rainbow Passage opening (long-form stamina) + one ad line + one character
+line (character track only — unlocks character listings, original voices,
+no celeb impersonations). Demand-led: AI suggests categories buyers search.
+Plus optional 10s unscripted prompt ("something you enjoyed recently") to
+separate conversational from reading voice.
