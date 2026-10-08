@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, ".")
 from hv import auth as hv_auth
 from hv import contracts as C
+from hv import series as SE
 from hv import disputes as D
 from hv import escrow as E
 from hv import ledger as L
@@ -71,6 +72,34 @@ def by_handle(handle: str):
     if not nid:
         raise HTTPException(404, "unknown handle")
     return portfolio(nid)
+
+
+SERIES: dict[str, dict] = {}
+
+
+@app.post("/v1/series")
+def create_series(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    ag = _agent(x_hv_agent_key)
+    m = SE.master_agreement(ag["principal_id"], ag["agent_id"], body["narrator_id"],
+                            body["episodes"], body.get("max_words_per_episode", 1500),
+                            body["price_each"], body.get("minimum_guaranteed",
+                            body["episodes"]), body.get("contract_weeks", 8))
+    s = SE.create_series(ag["principal_id"], ag["agent_id"], body["narrator_id"],
+                         body["episodes"], body.get("minutes_each", 10),
+                         body["price_each"])
+    SERIES[m["master_id"]] = {"master": m, "series": s}
+    _ev(m["master_id"], "series.created",
+        {"episodes": body["episodes"], "total": s["total_value"]},
+        ag["agent_id"], "agent")
+    return {"master": m, "series_total": s["total_value"]}
+
+
+@app.get("/v1/series/{mid}/progress")
+def series_progress(mid: str):
+    e = SERIES.get(mid)
+    if not e:
+        raise HTTPException(404, "unknown series")
+    return SE.series_health(e["series"])
 
 
 @app.get("/v1/voices")

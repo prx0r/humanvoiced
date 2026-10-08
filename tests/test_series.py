@@ -45,3 +45,29 @@ def test_proof_requires_hash_and_tracks_views():
                   "entries": [{"title": "Ep 1",
                                "video_url": "https://youtube.com/watch?v=x",
                                "views": 2500}]}
+
+
+def test_master_mutual_enforcement_and_guarantee():
+    m = S.master_agreement("org", "ag", "nar", episodes=15,
+                           max_words_per_episode=1500, price_each=8.0,
+                           minimum_guaranteed=10)
+    assert m["rights"]["voice_cloning"] is False
+    r = S.creator_supply_script(m, 1, late=True)
+    assert r == {"episode": 1, "script supplied": True,
+                 "deadline_shifted": True, "worker_penalty": "none"}
+    st = S.settle_termination(m, completed_episodes=4)
+    assert st == {"completed": 4, "guaranteed_minimum": 10,
+                  "termination_owed_episodes": 6, "termination_value": 48.0}
+    st2 = S.settle_termination(m, completed_episodes=12)
+    assert st2["termination_owed_episodes"] == 0
+
+
+def test_verification_levels():
+    assert S.verify_publication(False, "u", True, True)["level"] is None
+    assert S.verify_publication(True, "", False, False)["level"] == "platform"
+    v = S.verify_publication(True, "https://youtube.com/watch?v=x", True, True)
+    assert v["level"] == "publication" and v["public"] is True
+    c = S.verify_publication(True, "u", True, True, oauth_channel=True)
+    assert c["display"] == "Verified channel collaboration"
+    priv = S.verify_publication(True, "", False, False, confidential=True)
+    assert priv["level"] == "platform" and priv["public"] is False
