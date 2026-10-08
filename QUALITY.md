@@ -24,7 +24,7 @@ Owner targets: 10-second clip $2 · 10-minute video $10 · 30-minute video $20.
 
 Fitted curve, t in finished-audio minutes:
 
-\[ P(t) = 1.50 + 1.67\,t^{0.71} \]
+\[ P(t) = 1.54 + 1.65\,t^{0.71} \]
 
 | Length | Price |
 | ------ | ----- |
