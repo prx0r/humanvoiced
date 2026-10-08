@@ -78,7 +78,8 @@ def run_fleet(n: int = 10) -> dict:
                                           "narrator_ids": [nid]}, headers=H)
         assert r.status_code == 200, r.text
         cid, price = r.json()["contract"]["contract_id"], r.json()["price"]
-        assert price["customer_price"] == price["narrator_payout"], "100% rule"
+        assert price["customer_price"] == round(
+            price["narrator_payout"] + price["service_fee_usd"], 2), "fee split"
         a = c.post(f"/v1/offers/{cid}/accept", json={}, headers=NH)
         assert a.status_code == 200, a.text
         s = c.post(f"/v1/contracts/{cid}/submissions",
