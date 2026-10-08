@@ -658,8 +658,14 @@ def quote(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
 
 @app.post("/v1/contracts")
 def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
-    from hv import globalx as _gx
     ag = _agent(x_hv_agent_key)
+    doc, funding, priced = _create_funded(ag, brief)
+    return {"contract": doc, "funding": funding, "price": priced}
+
+
+def _create_funded(ag: dict, brief: dict[str, Any]) -> tuple[dict, str, dict]:
+    """Shared funded-contract path for direct creates and channel rebooks."""
+    from hv import globalx as _gx
     country = (brief.get("narrator_country") or "").upper()
     if country:
         ok, why = _gx.bookable_in(country)
@@ -693,6 +699,10 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
                              for s in manifest["segments"]}
     doc["session"] = {"takes": 0, "retakes": 0, "assemblies": 0,
                       "label": "HumanVoiced Verified Recording Session"}
+    if brief.get("channel_id"):
+        doc["channel_id"] = brief["channel_id"]
+    if brief.get("channel_preset"):
+        doc["channel_preset"] = brief["channel_preset"]
     DB.save_contract(doc)
     DB.save_intent(c.contract_id, {"intent_id": intent.intent_id,
                                   "amount_minor": intent.amount_minor,
@@ -700,8 +710,7 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     DB.offer_to(c.contract_id, brief.get("narrator_ids", []))
     _ev(c.contract_id, "contract.created", {"version": 1, "price": priced}, ag["agent_id"], "agent")
     _ev(c.contract_id, "payment.secured", {"intent": intent.intent_id}, "platform")
-    return {"contract": DB.get_contract(c.contract_id), "funding": intent.intent_id,
-            "price": priced}
+    return DB.get_contract(c.contract_id), intent.intent_id, priced
 
 
 @app.post("/v1/offers/{cid}/accept")
@@ -1137,7 +1146,8 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
         if not ALLOW_SIMULATED:
             raise HTTPException(501, "studio billing needs a production rail; "
                                      "basic pack remains available")
-        preset = _resolve_preset(body.get("preset_id") or "calm-documentary", ag)
+        preset = _resolve_preset(body.get("preset_id") or c.get("channel_preset")
+                                 or "natural-clean", ag)
     sub = c.get("last_submission") or {}
     sha = sub.get("sha256", "")
     from pathlib import Path as _P
@@ -1471,3 +1481,71 @@ def direct(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(N
          "issues": len((review.get("performance_review") or {}).get("suspected_issues", []))},
         ag["agent_id"], "agent")
     return review
+
+
+# ---------- channels: the same voice, every episode ----------
+
+@app.post("/v1/channels")
+def create_channel(body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """Save a channel voice: preferred narrator + preset + direction.
+    A repeat relationship, not ownership: the narrator accepts or declines
+    every offer, and nothing here permits cloning."""
+    import re as _re
+    ag = _agent(x_hv_agent_key)
+    name = (body.get("name") or "").strip()
+    if not _re.fullmatch(r"[A-Za-z0-9 _.-]{2,60}", name):
+        raise HTTPException(422, "name must be 2-60 chars")
+    nid = body.get("narrator_id", "")
+    if not nid or not DB.get_narrator(nid):
+        raise HTTPException(422, "unknown narrator_id")
+    preset_id = body.get("preset_id")
+    if preset_id:
+        _resolve_preset(preset_id, ag)  # 404 when unknown
+    ref_id = body.get("reference_id")
+    if ref_id:
+        ref = DB.get_ref(ref_id)
+        if not ref or ref.get("owner") != ag["agent_id"]:
+            raise HTTPException(404, "unknown reference")
+    doc = {"id": "ch_" + uid()[:12], "owner_agent": ag["agent_id"],
+           "name": name, "narrator_id": nid, "preset_id": preset_id,
+           "reference_id": ref_id,
+           "direction": (body.get("direction") or "")[:500],
+           "created": utcnow_now()}
+    DB.save_channel(doc)
+    _ev(doc["id"], "channel.saved", {"narrator": nid, "preset": preset_id},
+        ag["agent_id"], "agent")
+    return {"channel": doc}
+
+
+@app.get("/v1/channels")
+def list_channels(x_hv_agent_key: str | None = Header(None)):
+    ag = _agent(x_hv_agent_key)
+    return {"channels": DB.list_channels(ag["agent_id"])}
+
+
+@app.post("/v1/channels/{chid}/rebook")
+def rebook(chid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    """New episode, same voice: funded contract offered to the saved
+    narrator with the channel's preset attached. They can still decline."""
+    ag = _agent(x_hv_agent_key)
+    ch = DB.get_channel(chid)
+    if not ch or ch.get("owner_agent") != ag["agent_id"]:
+        raise HTTPException(404, "unknown channel")
+    script = body.get("script_text", "")
+    if not script.strip():
+        raise HTTPException(422, "script_text required")
+    brief = {"script_text": script,
+             "delivery_seconds": int(body.get("delivery_seconds", 7200)),
+             "tier": body.get("tier", "standard"),
+             "brief": body.get("brief") or {"mode": "script"},
+             "narrator_ids": [ch["narrator_id"]],
+             "channel_id": chid,
+             "channel_preset": ch.get("preset_id")}
+    if ch.get("direction") and isinstance(brief["brief"], dict):
+        brief["brief"] = {**brief["brief"],
+                          "direction": {"style": ch["direction"]}}
+    doc, funding, priced = _create_funded(ag, brief)
+    _ev(doc["contract_id"], "channel.rebooked",
+        {"channel": chid, "narrator": ch["narrator_id"]}, ag["agent_id"], "agent")
+    return {"contract": doc, "funding": funding, "price": priced,
+            "channel": ch["name"]}

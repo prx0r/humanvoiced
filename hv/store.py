@@ -29,6 +29,7 @@ class Store:
         conn.execute("CREATE TABLE IF NOT EXISTS presets (id TEXT PRIMARY KEY, doc TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS assets (sha256 TEXT PRIMARY KEY, doc TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS refs (id TEXT PRIMARY KEY, doc TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, doc TEXT)")
         conn.commit()
         conn.close()
 
@@ -189,6 +190,25 @@ class Store:
         conn.close()
         return [json.loads(r[0]) for r in rows
                 if json.loads(r[0]).get("owner") == owner]
+
+    def save_channel(self, doc: dict):
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO channels VALUES (?, ?)", (doc["id"], json.dumps(doc)))
+        conn.commit()
+        conn.close()
+
+    def get_channel(self, cid: str) -> dict | None:
+        conn = self._conn()
+        row = conn.execute("SELECT doc FROM channels WHERE id=?", (cid,)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+
+    def list_channels(self, owner_agent: str) -> list[dict]:
+        conn = self._conn()
+        rows = conn.execute("SELECT doc FROM channels").fetchall()
+        conn.close()
+        return [json.loads(r[0]) for r in rows
+                if json.loads(r[0]).get("owner_agent") == owner_agent]
 
     def save_narrator(self, doc: dict):
         conn = self._conn()
