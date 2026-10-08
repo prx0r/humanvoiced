@@ -12,7 +12,7 @@ import re
 
 from hv.util import sha256
 
-MODES = ("script", "storyboard", "timed")
+MODES = ("script", "storyboard", "timed", "cue")
 TIMINGS = ("soft", "hard")
 WORDS_PER_MINUTE = 150
 
@@ -54,7 +54,24 @@ def compile(brief: dict, script_text: str) -> dict:
                                      or target_total <= 0):
         errs.append("target_duration_ms must be a positive number")
     segs: list[dict] = []
-    if mode == "script":
+    if mode == "cue":
+        # Performance cues, not scripts: laughter, gasps, reactions with
+        # cultural context. Record several variations per cue as takes;
+        # transcript alignment does not apply. Priced by cue, not by word.
+        for i, g in enumerate(given or [{}]):
+            cue = ((g.get("cue") or g.get("script")) or "").strip()
+            if not cue:
+                errs.append(f"cue {i + 1}: cue text (or script) required")
+                continue
+            segs.append({"id": g.get("id") or f"c{i + 1:02d}",
+                         "script": cue, "is_cue": True,
+                         "context": (g.get("context") or "")[:300],
+                         "variations": max(1, int(g.get("variations", 3))),
+                         "target_start_ms": None, "target_end_ms": None,
+                         "timing": "soft",
+                         "direction": g.get("direction", direction.get("style", "")),
+                         "retakes_allowed": True})
+    elif mode == "script":
         if not (script_text or "").strip():
             errs.append("script_text required for script mode")
         for i, passage in enumerate(split_passages(script_text or "")):

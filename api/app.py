@@ -149,11 +149,11 @@ def _price_for(script_text: str, tier: str = "standard") -> dict:
 # ---------- auth ----------
 
 @app.get("/api/auth/google/start")
-def google_start():
+def google_start(next: str = ""):
     if not hv_auth.configured():
         raise HTTPException(501, "sign-in not configured yet")
     from fastapi.responses import RedirectResponse
-    state = SESS.issue_state()
+    state = SESS.issue_state(next)
     resp = RedirectResponse(hv_auth.authorize_url(state), status_code=302)
     # Bind the OAuth state to the initiating browser: callback must present
     # the same state both as query param and as cookie (CSRF protection).
@@ -181,7 +181,12 @@ def google_callback(request: Request, code: str = "", state: str = ""):
                           "handle": "", "languages": [], "prefs": {},
                           "samples": [], "created": utcnow_now()})
     token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
-    resp = RedirectResponse("https://humanvoiced.com/onboard?login=ok", status_code=302)
+    dest = SESS.pop_next(state)
+    if not dest.startswith("/"):
+        dest = "/onboard"
+    sep = "&" if "?" in dest else "?"
+    resp = RedirectResponse(f"https://humanvoiced.com{dest}{sep}login=ok",
+                            status_code=302)
     resp.set_cookie("hv_session", token, httponly=True, secure=True,
                     samesite="lax", max_age=30 * 86400, path="/",
                     domain=".humanvoiced.com")
@@ -667,11 +672,33 @@ def reputation(nid: str):
 
 # ---------- contracts ----------
 
+def _caller_agent(x_hv_session: str | None,
+                  x_hv_agent_key: str | None) -> dict:
+    """Agent key normally; a signed-in human may act for themselves
+    (principal = their own account). Either way the order still needs
+    the human approval step before anything funds."""
+    if x_hv_agent_key:
+        return _agent(x_hv_agent_key)
+    nid = SESS.narrator_for(x_hv_session or "") if x_hv_session else None
+    if not nid:
+        raise HTTPException(401, "agent key or sign-in required")
+    return {"agent_id": "user:" + nid, "principal_id": "user:" + nid,
+            "max_job_minor": 10 ** 12, "max_daily_minor": 10 ** 12}
+
 def _quote_for(brief: dict, ag: dict) -> tuple[C.HVContract, dict]:
     script = brief.get("script_text", "")
     if not script.strip():
         raise HTTPException(422, "script_text required")
     priced = _price_for(script, brief.get("tier", "standard"))
+    if (brief.get("brief") or {}).get("mode") == "cue":
+        # Cue sets are priced per set: variations take real effort, and a
+        # 20-second reaction is not worth 20 seconds of payout math.
+        priced = {**priced,
+                  "narrator_payout": max(priced["narrator_payout"],
+                                         P.CUE_MIN_PAYOUT_USD)}
+        priced["customer_price"] = round(priced["narrator_payout"]
+                                         + priced.get("service_fee_usd", 0.0)
+                                         + priced.get("payment_costs_usd", 0.0), 2)
     c = C.from_brief({**brief, "payout_usd": priced["narrator_payout"]},
                      script, ag["principal_id"], ag["agent_id"])
     errs = c.validate()
@@ -683,8 +710,9 @@ def _quote_for(brief: dict, ag: dict) -> tuple[C.HVContract, dict]:
 
 
 @app.post("/v1/contracts/quote")
-def quote(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
-    ag = _agent(x_hv_agent_key)
+def quote(brief: dict[str, Any], x_hv_session: str | None = Header(None),
+          x_hv_agent_key: str | None = Header(None)):
+    ag = _caller_agent(x_hv_session, x_hv_agent_key)
     c, priced = _quote_for(brief, ag)
     return {"quote_usd": priced["narrator_payout"], "customer_price": priced.get("customer_price"),
             "narrator_payout": priced["narrator_payout"],
@@ -744,7 +772,8 @@ def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple
     doc["content"] = verdict
     doc["rights"] = {"commercial_usage": doc.get("commercial_usage", "online_video"),
                      "voice_cloning": False, "ai_training": False,
-                     "audio_cleanup": True}
+                     "audio_cleanup": True,
+                     "statement": C.RIGHTS_SUMMARY}
     doc["service_fee_usd"] = priced.get("service_fee_usd", 0.0)
     if brief.get("channel_id"):
         doc["channel_id"] = brief["channel_id"]
@@ -1671,16 +1700,19 @@ def _order_terms(brief: dict, priced: dict, script: str) -> dict:
             "review_window_seconds": 86400,
             "voice_cloning_allowed": False,
             "ai_training_allowed": False,
-            "audio_cleanup_allowed": True}
+            "audio_cleanup_allowed": True,
+            "rights_statement": C.RIGHTS_SUMMARY}
 
 
 @app.post("/v1/orders/draft")
-def draft_order(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
-    """Agent proposes; nothing is funded. Returns terms + approval URL for
-    the paying human. Funding happens only after buyer authorization."""
+def draft_order(brief: dict[str, Any], x_hv_session: str | None = Header(None),
+                x_hv_agent_key: str | None = Header(None)):
+    """Agent proposes — or a signed-in human drafts for themselves; nothing
+    is funded. Returns terms + approval URL for the paying human. Funding
+    happens only after buyer authorization."""
     import json as _j
     import secrets as _s
-    ag = _agent(x_hv_agent_key)
+    ag = _caller_agent(x_hv_session, x_hv_agent_key)
     script = brief.get("script_text", "")
     c, priced = _quote_for(brief, ag)  # validates + budget-checks, reserves nothing
     terms = _order_terms(brief, {**priced,
@@ -1728,14 +1760,17 @@ def get_order(oid: str, t: str = ""):
 @app.post("/v1/orders/{oid}/approve")
 def approve_order(oid: str, body: dict[str, Any],
                   x_hv_session: str | None = Header(None)):
-    """Buyer authorization: bearer token + frozen terms hash + expiry, then
-    spend is reserved and the funded contract is created and offered.
-    Server-enforced; agents cannot self-approve."""
+    """Buyer authorization: bearer link token AND a signed-in buyer identity,
+    bound to the frozen terms hash before expiry. Agents cannot self-approve:
+    approval without a session is refused, and spend is reserved only here."""
     o = DB.get_order(oid)
     if not o or o.get("token_hash") != sha256(body.get("token", "")):
         raise HTTPException(404, "unknown order")
     if o["status"] != "awaiting_buyer_approval":
         raise HTTPException(409, "order already " + o["status"])
+    buyer = SESS.narrator_for(x_hv_session or "") if x_hv_session else None
+    if not buyer:
+        raise HTTPException(401, "sign in to approve — bearer link alone is not authorization")
     if body.get("terms_hash") != o["terms_hash"]:
         raise HTTPException(409, "terms changed since draft — request a fresh order")
     try:
@@ -1750,18 +1785,17 @@ def approve_order(oid: str, body: dict[str, Any],
     ag = {"agent_id": o["agent_id"], "principal_id": o["principal_id"],
           "max_job_minor": o["budget"]["max_job_minor"],
           "max_daily_minor": o["budget"]["max_daily_minor"]}
-    nid = SESS.narrator_for(x_hv_session or "") if x_hv_session else None
     doc, funding, priced = _create_funded(ag, o["brief"])
     now = utcnow_now()
     o["status"] = "authorized"
-    o["approval"] = {"by": nid or "bearer-token-holder", "at": now,
+    o["approval"] = {"by": buyer, "at": now,
                      "terms_hash": o["terms_hash"], "version": 1}
     o["contract_id"] = doc["contract_id"]
     o["funding"] = funding
     DB.save_order(o)
-    _ev(oid, "order.authorized", {"by": o["approval"]["by"],
+    _ev(oid, "order.authorized", {"by": buyer,
                                   "contract": doc["contract_id"]},
-        nid or "buyer", "narrator" if nid else "buyer")
+        buyer, "buyer")
     return {"order_id": oid, "status": "authorized",
             "contract_id": doc["contract_id"], "funding": funding,
             "price": priced}
@@ -1857,3 +1891,42 @@ def admin_review(body: dict[str, Any]):
     _ev(cid, "payment.secured", {"intent": intent.intent_id}, "platform")
     return {"ok": True, "status": "offered", "funding": intent.intent_id,
             "excluded": excluded}
+
+
+# ---------- remote MCP: Streamable-HTTP JSON mode ----------
+
+_MCP = None
+
+
+def _mcp_handle():
+    """Local stdio server module, loaded by path (the `mcp` package name
+    collides with the installed MCP SDK). Cached after first load."""
+    global _MCP
+    if _MCP is None:
+        import importlib.util as _ilu
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "mcp", "server.py")
+        spec = _ilu.spec_from_file_location("hv_mcp_server", path)
+        _MCP = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(_MCP)
+    return _MCP
+
+
+@app.post("/mcp")
+def mcp_http(body: dict[str, Any], request: Request):
+    """Remote MCP (JSON mode; status polling replaces streaming for v0).
+    Origin-checked; every tool still validates its own agent key."""
+    allowed = [o.strip() for o in
+               os.getenv("HV_MCP_ORIGINS",
+                         "https://humanvoiced.com,https://www.humanvoiced.com").split(",")]
+    origin = request.headers.get("origin", "")
+    if origin and origin not in allowed:
+        raise HTTPException(403, "origin not allowed")
+    if body.get("jsonrpc") != "2.0":
+        raise HTTPException(422, "JSON-RPC 2.0 only")
+    try:
+        result = _mcp_handle().handle(body.get("method", ""), body.get("params", {}))
+    except Exception as e:
+        return {"jsonrpc": "2.0", "id": body.get("id"),
+                "error": {"code": -32000, "message": str(e)[:200]}}
+    return {"jsonrpc": "2.0", "id": body.get("id"), "result": result}

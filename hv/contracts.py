@@ -14,6 +14,21 @@ from hv.util import sha256, uid
 STATUSES = ("proposed", "offered", "accepted", "submitted", "in_correction",
             "delivered", "disputed", "settled", "cancelled", "reassigned")
 
+# Performer voice rights (summary for legal review, not legal advice).
+# The performer licenses the APPROVED recording for the agreed project and
+# media. Nothing grants ownership of their vocal identity, and no recording,
+# sample, take or performance may train or improve a voice synthesis,
+# text-to-speech, conversion or cloning model, create a digital replica,
+# generate new speech as the performer, or become a standalone voice
+# dataset — each needs a separate explicit agreement. Ordinary processing
+# (cleanup, EQ, compression, mastering, editing, sync) that preserves the
+# performance is permitted. Material changes need renewed agreement.
+RIGHTS_SUMMARY = ("Performer licenses the approved recording for the agreed "
+                  "project and media. No ownership of vocal identity is "
+                  "transferred. No training, cloning, replica, synthetic "
+                  "speech, dataset extraction or impersonation without a "
+                  "separate explicit agreement.")
+
 # Launch policy v0.1 (TECH-SPEC §8.5): offer expiry window minutes.
 OFFER_EXPIRY_MINUTES = (5, 15)
 REVIEW_WINDOW_SECONDS = 86400

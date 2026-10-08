@@ -23,16 +23,19 @@ class SessionStore:
         conn = sqlite3.connect(str(self.db_path))
         conn.execute("CREATE TABLE IF NOT EXISTS oauth_state (state TEXT PRIMARY KEY, created REAL)")
         conn.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, sub TEXT, email TEXT, narrator_id TEXT, created REAL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS oauth_next (state TEXT PRIMARY KEY, next TEXT)")
         conn.commit()
         conn.close()
 
     def _conn(self):
         return sqlite3.connect(str(self.db_path))
 
-    def issue_state(self) -> str:
+    def issue_state(self, next_url: str = "") -> str:
         st = secrets.token_urlsafe(24)
         conn = self._conn()
         conn.execute("INSERT INTO oauth_state VALUES (?, ?)", (st, time.time()))
+        if next_url.startswith("/") and "://" not in next_url:
+            conn.execute("INSERT OR REPLACE INTO oauth_next VALUES (?, ?)", (st, next_url[:200]))
         conn.commit()
         conn.close()
         return st
@@ -47,6 +50,14 @@ class SessionStore:
         conn.commit()
         conn.close()
         return (time.time() - row[0]) <= STATE_TTL
+
+    def pop_next(self, state: str) -> str:
+        conn = self._conn()
+        row = conn.execute("SELECT next FROM oauth_next WHERE state=?", (state,)).fetchone()
+        conn.execute("DELETE FROM oauth_next WHERE state=?", (state,))
+        conn.commit()
+        conn.close()
+        return row[0] if row else ""
 
     def create(self, sub: str, email: str, narrator_id: str) -> str:
         tok = secrets.token_urlsafe(32)

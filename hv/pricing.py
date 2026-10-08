@@ -25,6 +25,10 @@ WORDS_PER_MINUTE = 150
 # studio upgrades carry the economics, not the fee. Illustrative.
 SERVICE_FEE_USD = 1.00
 
+# Performance cues (reactions, character bits) are priced per cue set, not
+# per word: several variations take real performer effort. Floor only.
+CUE_MIN_PAYOUT_USD = 5.00
+
 TIERS = {"standard": 1.0, "proven": 1.3, "specialist": 1.8, "priority": 1.5}
 
 
@@ -54,9 +58,13 @@ def quote(t_minutes: float, tier: str = "standard", batched: bool = False) -> di
     unit = round(curve(t_minutes) * TIERS.get(tier, 1.0), 2)
     total = unit if batched else max(CHECKOUT_MIN, unit)
     payout = round(max(NARRATOR_MIN_PAYOUT, total * NARRATOR_SHARE), 2)
-    return {"customer_price": round(total + SERVICE_FEE_USD, 2),
-            "narrator_payout": payout,
-            "service_fee_usd": SERVICE_FEE_USD, "tier": tier, "batched": batched}
+    # Payment processing costs: $0 until a real provider is wired. Shown as
+    # an explicit line so the total is always payout + fee + processing.
+    payment_costs = 0.0
+    return {"customer_price": round(total + SERVICE_FEE_USD + payment_costs, 2),
+            "narrator_payout": payout, "service_fee_usd": SERVICE_FEE_USD,
+            "payment_costs_usd": payment_costs,
+            "tier": tier, "batched": batched}
 
 
 def quote_cents(total_seconds: int, rarity: float = 1.0, tier: float = 1.0) -> int:
