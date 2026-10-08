@@ -44,6 +44,23 @@ def duration_from_words(words: int, wpm: int = WORDS_PER_MINUTE) -> float:
     return round(words / wpm, 2)
 
 
+# Pilot economics (LAUNCH.md §5): fixed $8 narrator / $3 platform on the $11
+# 10-minute product. Effort guard: if median effort for 10 finished minutes
+# exceeds 40 narrator-minutes, the product needs repricing.
+PILOT_NARRATOR_USD = 8.00
+PILOT_PLATFORM_USD = 3.00
+EFFORT_GUARD_MINUTES_PER_10 = 40.0
+
+
+def pilot_split(price: float = 11.0) -> dict:
+    return {"creator_price": price, "narrator_payout": PILOT_NARRATOR_USD,
+            "platform_share": round(price - PILOT_NARRATOR_USD, 2)}
+
+
+def effort_guard_ok(median_effort_minutes_per_10: float) -> bool:
+    return median_effort_minutes_per_10 <= EFFORT_GUARD_MINUTES_PER_10
+
+
 def rarity_for(supply_count: int, demand_count: int) -> float:
     """Scarcity multiplier 1.0–2.5 from verified demand signals only."""
     if supply_count <= 0:

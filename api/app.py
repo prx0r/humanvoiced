@@ -31,6 +31,7 @@ intents: dict[str, E.PaymentIntent] = {}
 reps: dict[str, R.ReputationVector] = {}
 dqueue = D.DisputeQueue()
 AGENTS: dict[str, dict] = {}
+HANDLES: dict[str, str] = {}  # handle -> narrator_id (humanvoiced.com/@alex)
 
 
 def _agent(key: str | None) -> dict:
@@ -62,6 +63,14 @@ def google_callback(code: str = "", state: str = ""):
     return {"sub": profile.get("sub"), "email": profile.get("email"),
             "name": profile.get("name"),
             "note": "first user: owner claims narrator nar_001"}
+
+
+@app.get("/v1/voices/by-handle/{handle}")
+def by_handle(handle: str):
+    nid = HANDLES.get(handle.lower().lstrip("@"))
+    if not nid:
+        raise HTTPException(404, "unknown handle")
+    return portfolio(nid)
 
 
 @app.get("/v1/voices")
