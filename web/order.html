@@ -30,7 +30,7 @@ async function boot(){
     `<div class="checkrow"><span>Audio cleanup</span><b>Noise/level mastering included</b></div>`+
     `<div class="checkrow"><span>Script hash</span><b>${esc((t.script_sha256||'').slice(0,16))}…</b></div>`;
   $('total').textContent='$'+t.customer_price_usd;
-  $('split').textContent=`Narrator receives $${t.narrator_payout_usd}. No platform commission; processing services (if any) are billed separately.`;
+  $('split').textContent=`Narrator receives $${t.narrator_payout_usd} (100%). Service fee $${t.service_fee_usd||0} is separate platform revenue — never deducted from the narrator.`;
   const btn=$('approve'); btn.disabled=false;
   btn.onclick=async()=>{ btn.disabled=true; $('msg').textContent='Authorizing…';
     try{

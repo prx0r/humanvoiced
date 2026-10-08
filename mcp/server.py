@@ -54,7 +54,7 @@ def _quote(script: str, tier: str, ag: dict) -> dict:
     from hv import pricing as _p
     minutes = max(0.25, len(script.split()) / 150.0)
     q = _p.quote(minutes, tier=tier)
-    if q["narrator_payout"] * 100 > ag["max_job_minor"]:
+    if q["customer_price"] * 100 > ag["max_job_minor"]:
         raise ValueError("exceeds agent max_job budget")
     return {"minutes": round(minutes, 2), **q}
 

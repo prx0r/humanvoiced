@@ -17,10 +17,12 @@ def test_fitted_curve_table():
 
 
 def test_checkout_floor_and_batch():
-    assert P.quote(0.25)["customer_price"] == 3.50
-    assert P.quote(0.25, batched=True)["customer_price"] == 2.15
+    assert P.quote(0.25)["customer_price"] == 3.50 + P.SERVICE_FEE_USD
+    assert P.quote(0.25, batched=True)["customer_price"] == 2.15 + P.SERVICE_FEE_USD
     q = P.quote(10)
-    assert q["customer_price"] == 10.0 and q["narrator_payout"] == 10.0
+    assert q["customer_price"] == 10.0 + P.SERVICE_FEE_USD
+    assert q["narrator_payout"] == 10.0
+    assert q["service_fee_usd"] == P.SERVICE_FEE_USD
 
 
 def test_duration_from_words():

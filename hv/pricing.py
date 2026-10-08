@@ -18,6 +18,13 @@ NARRATOR_SHARE = 1.0
 NARRATOR_MIN_PAYOUT = 2.25
 WORDS_PER_MINUTE = 150
 
+# Buyer-paid service fee (HumanVoiced revenue, NOT commission).
+# The narrator always receives 100% of narrator_payout; the buyer pays
+# payout + fee, disclosed as separate lines. $5/job is illustrative, not
+# validated — repeat volume or higher-value work must carry the unit
+# economics, not the narrator's pay.
+SERVICE_FEE_USD = 5.00
+
 TIERS = {"standard": 1.0, "proven": 1.3, "specialist": 1.8, "priority": 1.5}
 
 
@@ -41,12 +48,15 @@ def heatmap(t_minutes: float, tier: str = "new") -> dict:
 
 
 def quote(t_minutes: float, tier: str = "standard", batched: bool = False) -> dict:
-    """Customer quote. Single orders floor at $3.50; batched clips keep unit price."""
+    """Narration quote. Single orders floor the payout at $3.50; batched
+    clips keep unit price. Buyer total adds the service fee on a separate
+    line — narrator payout is never reduced by it."""
     unit = round(curve(t_minutes) * TIERS.get(tier, 1.0), 2)
     total = unit if batched else max(CHECKOUT_MIN, unit)
     payout = round(max(NARRATOR_MIN_PAYOUT, total * NARRATOR_SHARE), 2)
-    return {"customer_price": total, "narrator_payout": payout,
-            "tier": tier, "batched": batched}
+    return {"customer_price": round(total + SERVICE_FEE_USD, 2),
+            "narrator_payout": payout,
+            "service_fee_usd": SERVICE_FEE_USD, "tier": tier, "batched": batched}
 
 
 def quote_cents(total_seconds: int, rarity: float = 1.0, tier: float = 1.0) -> int:

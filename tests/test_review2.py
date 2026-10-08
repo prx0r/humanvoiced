@@ -195,10 +195,11 @@ def test_narrator_gets_100_percent(tmp_path):
     H = {"X-HV-Agent-Key": "k1"}
     script = "word " * 1500  # ~10 min
     q = c.post("/v1/contracts/quote", json={"script_text": script}, headers=H)
-    assert q.json()["quote_usd"] == q.json()["customer_price"]
+    assert q.json()["narrator_payout"] == 10.0
+    assert q.json()["customer_price"] == 10.0 + q.json()["service_fee_usd"]
     r = c.post("/v1/contracts", json={"script_text": script, "narrator_ids": []}, headers=H)
     assert r.json()["contract"]["payout_usd"] == r.json()["price"]["narrator_payout"]
-    assert r.json()["price"]["customer_price"] == r.json()["price"]["narrator_payout"]
+    assert r.json()["price"]["customer_price"] == r.json()["price"]["narrator_payout"] + r.json()["price"]["service_fee_usd"]
 
 
 def test_guest_cannot_claim_foreign_order(tmp_path):

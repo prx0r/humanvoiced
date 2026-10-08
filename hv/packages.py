@@ -43,5 +43,6 @@ def build_manifest(contract: dict, original_sha: str, assets: dict,
                        "enhancement_consent": "processing_only_no_cloning"},
             "processing_fee_usd": processing_fee_usd,
             "narrator_payout_usd": contract.get("payout_usd"),
+            "service_fee_usd": contract.get("service_fee_usd", 0.0),
             "ffmpeg": _p.ffmpeg_version(),
             "built_at": utcnow()}

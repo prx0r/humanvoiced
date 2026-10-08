@@ -59,8 +59,8 @@ def test_search_quote_draft_status(tmp_path):
     ids = [m["voice_id"] for m in s["result"]["matches"]]
     assert ids == ["nar_m1"]  # unpublished excluded
     q = _call("hv.pricing.quote", {"script_text": "word " * 1500, "agent_key": "key1"})
-    assert q["result"]["customer_price"] == 10.0
     assert q["result"]["narrator_payout"] == 10.0
+    assert q["result"]["customer_price"] == 10.0 + q["result"]["service_fee_usd"]
     d = _call("hv.contract.draft", {"script_text": "hello world " * 40,
                                     "narrator_ids": ["nar_m1"], "agent_key": "key1"})
     assert d["result"]["approval_url"].startswith("https://humanvoiced.com/order.html")

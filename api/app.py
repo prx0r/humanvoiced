@@ -486,8 +486,8 @@ def guest_order(body: dict[str, Any], x_hv_agent_key: str | None = Header(None))
         (ag["agent_id"] if ag else "guest"), "agent" if ag else "guest")
     return {"order_id": oid, "url": f"https://humanvoiced.com/orders/{oid}",
             "access_credential": cred, "narrator_payout": c["payout_usd"],
-            "commission": 0.0,
-            "note": "store the credential securely; processor fees borne by platform"}
+            "commission": 0.0, "service_fee_usd": c.get("service_fee_usd", 0.0),
+            "note": "narrator receives 100% of payout; service fee is separate platform revenue"}
 
 
 @app.post("/v1/voices/search")
@@ -677,7 +677,7 @@ def _quote_for(brief: dict, ag: dict) -> tuple[C.HVContract, dict]:
     errs = c.validate()
     if errs:
         raise HTTPException(422, "; ".join(errs))
-    if priced["narrator_payout"] * 100 > ag["max_job_minor"]:
+    if priced["customer_price"] * 100 > ag["max_job_minor"]:
         raise HTTPException(402, "exceeds agent max_job budget")
     return c, priced
 
@@ -687,6 +687,8 @@ def quote(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     ag = _agent(x_hv_agent_key)
     c, priced = _quote_for(brief, ag)
     return {"quote_usd": priced["narrator_payout"], "customer_price": priced.get("customer_price"),
+            "narrator_payout": priced["narrator_payout"],
+            "service_fee_usd": priced.get("service_fee_usd", 0.0),
             "minutes": priced["minutes"], "delivery_seconds": c.delivery_seconds,
             "script_sha256": c.script_sha256, "policy_version": POLICY_VERSION}
 
@@ -718,7 +720,7 @@ def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple
         hold = True
     if not hold:
         today = _dt.date.today().isoformat()
-        if not DB.reserve_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100),
+        if not DB.reserve_spend(ag["agent_id"], today, int(priced["customer_price"] * 100),
                                 ag.get("max_daily_minor", 10**12)):
             raise HTTPException(402, "exceeds agent daily budget")
     DB.save_script(script)
@@ -743,6 +745,7 @@ def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple
     doc["rights"] = {"commercial_usage": doc.get("commercial_usage", "online_video"),
                      "voice_cloning": False, "ai_training": False,
                      "audio_cleanup": True}
+    doc["service_fee_usd"] = priced.get("service_fee_usd", 0.0)
     if brief.get("channel_id"):
         doc["channel_id"] = brief["channel_id"]
     if brief.get("channel_preset"):
@@ -777,6 +780,7 @@ def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple
     if excluded:
         _ev(c.contract_id, "offers.filtered",
             {"excluded": excluded, "flags": verdict["flags"]}, "platform")
+    DB.record_fin("service_fee", int(priced.get("service_fee_usd", 0.0) * 100), "")
     return DB.get_contract(c.contract_id), intent.intent_id, priced
 
 
@@ -1659,6 +1663,7 @@ def _order_terms(brief: dict, priced: dict, script: str) -> dict:
             "minutes": priced["minutes"],
             "narrator_payout_usd": priced["narrator_payout"],
             "customer_price_usd": priced.get("customer_price"),
+            "service_fee_usd": priced.get("service_fee_usd", 0.0),
             "delivery_seconds": priced.get("delivery_seconds"),
             "tier": priced.get("tier", "standard"),
             "commercial_usage": brief.get("commercial_usage", "online_video"),

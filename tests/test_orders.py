@@ -38,7 +38,7 @@ def test_draft_approve_funds_and_offers(tmp_path):
     body = d.json()
     assert body["status"] == "awaiting_buyer_approval"
     assert body["approval_url"].startswith("https://humanvoiced.com/order.html?o=hvo_")
-    assert body["quote"]["narrator_payout_usd"] == body["quote"]["customer_price_usd"]
+    assert body["quote"]["customer_price_usd"] == body["quote"]["narrator_payout_usd"] + body["quote"]["service_fee_usd"]
     # nothing funded, no contract yet
     assert A.DB.get_order(body["order_id"])["contract_id"] is None
     # token-gated terms view
