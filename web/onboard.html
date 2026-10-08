@@ -1,16 +1,54 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>HumanVoiced — record your 30-second sample</title>
-<style>body{font-family:system-ui;max-width:640px;margin:2rem auto;padding:0 1rem}</style></head>
+<title>HumanVoiced — record your voice</title>
+<style>
+body{font-family:system-ui;max-width:640px;margin:2rem auto;padding:0 1rem}
+.step{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:1rem 0}
+.step.done{opacity:.55}
+button{padding:.5rem 1rem;font-size:1rem;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+#script{background:#f6f6f6;padding:1rem;border-radius:8px}
+small{color:#666}
+</style></head>
 <body>
-<h1>Record your sample</h1>
-<p>Read the Alex café passage naturally (~30s). Nothing uploads until you approve it.</p>
-<button id="rec">● Record</button> <button id="stop" disabled>■ Stop</button>
+<h1>Become a voice</h1>
+
+<div class="step" id="s1">
+<h2>1 · Read this (~30 seconds)</h2>
+<div id="script"><p>Last Thursday morning, Alex walked into a little café beside
+the railway station. The rain had finally stopped, but the streets were
+still shining.</p>
+<p>At seven forty-five, a woman in a bright blue jacket asked,
+"Have you heard the news?"</p>
+<p>Alex laughed. "Not yet. What happened?"</p>
+<p>By lunchtime, twenty-three people had gathered outside. Nobody quite knew
+what was going on, and that was the strange part.</p>
+<p>Sometimes an ordinary day becomes a story you'll remember for years.</p></div>
+<p><button id="rec">● Record</button> <button id="stop" disabled>■ Stop</button></p>
 <audio id="play" controls style="display:block;margin:1rem 0"></audio>
-<button id="send" disabled>Upload sample</button>
+<p><small>Review it. Nothing uploads until you approve it in step 3.</small></p>
+</div>
+
+<div class="step" id="s2">
+<h2>2 · Sign in with Google</h2>
+<p><button id="login">Sign in with Google</button> <span id="who"></span></p>
+<p><small>Attaches the recording to your new account. No payment setup needed.</small></p>
+</div>
+
+<div class="step" id="s3">
+<h2>3 · Review your AI profile, then publish</h2>
+<p><button id="draft" disabled>Generate my profile draft</button></p>
+<pre id="draftout" style="background:#f6f6f6;padding:1rem;white-space:pre-wrap"></pre>
+<p><button id="publish" disabled>Publish my portfolio</button> <span id="portlink"></span></p>
+</div>
+
 <p id="msg"></p>
+
 <script>
-let mr, chunks = [], wavBlob = null;
+const API = 'https://api.humanvoiced.com';
+let wavBlob = null, session = '';
 const msg = t => document.getElementById('msg').textContent = t;
+const done = id => document.getElementById(id).classList.add('done');
+
 function encodeWav(buffer) {
   const ch0 = buffer.getChannelData(0);
   const n = ch0.length, sr = buffer.sampleRate;
@@ -24,19 +62,18 @@ function encodeWav(buffer) {
   for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, ch0[i])) * 32767, true);
   return new Blob([ab], {type: 'audio/wav'});
 }
+
+let mr, chunks = [];
 document.getElementById('rec').onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-  mr = new MediaRecorder(stream);
-  chunks = [];
+  mr = new MediaRecorder(stream); chunks = [];
   mr.ondataavailable = e => chunks.push(e.data);
   mr.onstop = async () => {
     const blob = new Blob(chunks, {type: mr.mimeType});
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-    wavBlob = encodeWav(decoded);
+    wavBlob = encodeWav(await ctx.decodeAudioData(await blob.arrayBuffer()));
     document.getElementById('play').src = URL.createObjectURL(wavBlob);
-    document.getElementById('send').disabled = false;
-    msg('Review it. Upload only if you are happy.');
+    done('s1'); msg('Review it above. Then sign in.');
   };
   mr.start();
   document.getElementById('rec').disabled = true;
@@ -47,15 +84,40 @@ document.getElementById('stop').onclick = () => {
   document.getElementById('rec').disabled = false;
   document.getElementById('stop').disabled = true;
 };
-document.getElementById('send').onclick = async () => {
-  const q = new URLSearchParams(location.search);
-  const session = q.get('session') || '';
+
+document.getElementById('login').onclick = () => {
+  location.href = API + '/api/auth/google/start';
+};
+
+async function authedFetch(url, opts = {}) {
+  const r = await fetch(url, {...opts, credentials: 'include'});
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+document.getElementById('draft').onclick = async () => {
+  if (!wavBlob) { msg('Record first.'); return; }
   if (!session) { msg('Sign in first.'); return; }
-  const blob = wavBlob;
-  if (!blob) { msg('Record first.'); return; }
-  const r = await fetch('/v1/narrators/me/sample', {
-    method: 'POST', headers: {'X-HV-Session': session, 'Content-Type': 'audio/wav'}, body: blob});
-  msg(r.ok ? 'Sample saved to your profile.' : 'Upload failed: ' + await r.text());
+  const up = await fetch(API + '/v1/narrators/me/sample', {
+    method: 'POST', headers: {'Content-Type': 'audio/wav'}, body: wavBlob, credentials: 'include'});
+  if (!up.ok) { msg('Upload failed.'); return; }
+  const draft = await authedFetch(API + '/v1/narrators/me/profile', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({draft_from_tech: true, tech: {peak: 15000, silence_ratio: 0.1},
+      display_name: '', languages: ['en'], categories: ['narration']})});
+  document.getElementById('draftout').textContent = JSON.stringify(draft.draft, null, 2);
+  document.getElementById('publish').disabled = false;
+  done('s2'); msg('Edit anything below in your head — publish when it reads true.');
+};
+
+document.getElementById('publish').onclick = async () => {
+  const draft = JSON.parse(document.getElementById('draftout').textContent || '{}');
+  const pub = await authedFetch(API + '/v1/narrators/me/profile', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({publish: true, profile: draft})});
+  document.getElementById('portlink').innerHTML =
+    'Live: <a href="/portfolio.html">your portfolio</a>';
+  done('s3'); msg('Published. Welcome to the library.');
 };
 </script>
 </body></html>

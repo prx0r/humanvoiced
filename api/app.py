@@ -41,6 +41,15 @@ ALLOW_SIMULATED = os.getenv("HV_ALLOW_SIMULATED", "1") == "1"
 
 app = FastAPI(title="HumanVoiced", version="0.1")
 
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://humanvoiced.com", "https://www.humanvoiced.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.middleware("http")
 async def _cookie_session(request, call_next):
@@ -132,7 +141,8 @@ def google_callback(code: str = "", state: str = ""):
     token = SESS.create(profile.get("sub", ""), profile.get("email", ""), nid)
     resp = JSONResponse({"narrator_id": nid, "email": profile.get("email")})
     resp.set_cookie("hv_session", token, httponly=True, secure=True,
-                    samesite="lax", max_age=30 * 86400, path="/")
+                    samesite="lax", max_age=30 * 86400, path="/",
+                    domain=".humanvoiced.com")
     return resp
 
 
