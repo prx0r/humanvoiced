@@ -18,7 +18,7 @@ def test_capability_honesty():
     st = A.StellarEscrow()
     assert st.capabilities()["supports_protected_funding"] is True
     assert st.capabilities()["production_enabled"] is False
-    x = S.X402Base()
+    x = A.X402Base()
     assert x.capabilities()["supports_protected_funding"] is False
     svc = S.PaymentService(None)
     for ad in (st, x, A.StripeConnect(), A.Simulated()):
