@@ -149,7 +149,9 @@ def studio_master(src_wav: str, out_dir: str, preset: dict,
         chain += f",{RIDE}"
     chain += f",acompressor={COMPRESSION[preset['compression']]}"
     if preset.get("deess", True):
-        chain += ",deesser"
+        # NOTE: bare `deesser` runs at intensity 0 (a no-op). Explicit
+        # moderate settings: presence-band focus, capped reduction.
+        chain += ",deesser=i=0.6:m=0.4:f=0.7"
     if EQ[preset["eq"]]:
         chain += "," + EQ[preset["eq"]]
     if ref_curve:
