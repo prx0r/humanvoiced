@@ -15,7 +15,7 @@ def test_fee_math_narrator_whole():
 
 
 def test_capability_honesty():
-    st = S.StellarEscrow()
+    st = A.StellarEscrow()
     assert st.capabilities()["supports_protected_funding"] is True
     assert st.capabilities()["production_enabled"] is False
     x = S.X402Base()
