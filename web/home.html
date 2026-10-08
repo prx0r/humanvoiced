@@ -27,8 +27,9 @@ async function boot(){
     const o=jobs.offers[0];
     $('offer-card').classList.remove('hidden');
     $('offer-title').textContent=`Narration job · ${money(o.payout_usd)} · #${esc(o.contract_id)}`;
-    $('offer-meta').textContent=`Deadline ${o.deadline_at||'set on accept'} · paid on approval. Declining costs nothing.`;
-    $('offer-accept').onclick=async()=>{ await req(`/v1/offers/${o.contract_id}/accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); location.href='workspace.html?cid='+encodeURIComponent(o.contract_id); };
+    const flags=(o.content_flags||[]).join(', ')||'general audiences';
+    $('offer-meta').textContent=`Deadline ${o.deadline_at||'set on accept'} · paid on approval. Content: ${flags}. Full script, payout, usage and terms are shown before you accept — declining costs nothing.`;
+    $('offer-accept').onclick=async()=>{ if(!confirm('I have had access to the complete script and usage terms. I voluntarily accept this recording assignment for the stated compensation. Material changes require my agreement.\n\nAccept?'))return; await req(`/v1/offers/${o.contract_id}/accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); location.href='workspace.html?cid='+encodeURIComponent(o.contract_id); };
     $('offer-decline').onclick=async()=>{ await req(`/v1/offers/${o.contract_id}/decline`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); location.reload(); };
   }
   if(jobs.active.length){

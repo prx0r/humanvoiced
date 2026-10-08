@@ -287,9 +287,13 @@ def my_jobs(x_hv_session: str | None = Header(None)):
     for cid in DB.list_offers(nid):
         c = DB.get_contract(cid)
         if c and c.get("status") in ("offered", "proposed"):
+            content = c.get("content") or {"tier": "general", "flags": []}
             offers.append({"contract_id": cid, "payout_usd": c.get("payout_usd"),
                            "delivery_seconds": c.get("delivery_seconds"),
-                           "deadline_at": c.get("deadline_at", "")})
+                           "deadline_at": c.get("deadline_at", ""),
+                           "content_tier": content.get("tier", "general"),
+                           "content_flags": content.get("flags", []),
+                           "rights": c.get("rights", {})})
     active, recent = [], []
     for c in DB.contracts_for_narrator(nid):
         row = {"contract_id": c["contract_id"], "payout_usd": c.get("payout_usd"),
@@ -694,8 +698,10 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     return {"contract": doc, "funding": funding, "price": priced}
 
 
-def _create_funded(ag: dict, brief: dict[str, Any]) -> tuple[dict, str, dict]:
-    """Shared funded-contract path for direct creates and channel rebooks."""
+def _create_funded(ag: dict, brief: dict[str, Any], hold: bool = False) -> tuple[dict, str, dict]:
+    """Shared funded-contract path for direct creates and channel rebooks.
+    hold=True parks restricted-tier contracts for human review (no spend,
+    no funding, no offers) instead of refusing outright."""
     from hv import globalx as _gx
     country = (brief.get("narrator_country") or "").upper()
     if country:
@@ -703,11 +709,18 @@ def _create_funded(ag: dict, brief: dict[str, Any]) -> tuple[dict, str, dict]:
         if not ok:
             raise HTTPException(402, why)
     c, priced = _quote_for(brief, ag)
-    today = _dt.date.today().isoformat()
-    if not DB.reserve_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100),
-                            ag.get("max_daily_minor", 10**12)):
-        raise HTTPException(402, "exceeds agent daily budget")
     script = brief.get("script_text", "")
+    from hv import content as _ct
+    verdict = _ct.classify(script)
+    if verdict["tier"] == "prohibited":
+        raise HTTPException(422, "prohibited content: " + verdict["prohibited_reason"])
+    if hold is False and verdict["tier"] == "restricted":
+        hold = True
+    if not hold:
+        today = _dt.date.today().isoformat()
+        if not DB.reserve_spend(ag["agent_id"], today, int(priced["narrator_payout"] * 100),
+                                ag.get("max_daily_minor", 10**12)):
+            raise HTTPException(402, "exceeds agent daily budget")
     DB.save_script(script)
     from hv import brief as _br
     try:
@@ -717,11 +730,7 @@ def _create_funded(ag: dict, brief: dict[str, Any]) -> tuple[dict, str, dict]:
     if not ALLOW_SIMULATED:
         raise HTTPException(501, "simulated funding disabled — set HV_ALLOW_SIMULATED=1 only in dev/test; "
                                  "production requires a real protected-funding rail")
-    intent = E.PaymentIntent(contract_id=c.contract_id, amount_minor=int(priced["narrator_payout"] * 100))
-    if not rail.verify_funding(intent):
-        raise HTTPException(402, "funding verification failed")
-    rail.lock(intent)
-    c.funding_status = "secured"
+    c.funding_status = "pending"
     c.status = "offered"
     doc = c.to_dict()
     doc["segment_manifest"] = manifest
@@ -730,17 +739,44 @@ def _create_funded(ag: dict, brief: dict[str, Any]) -> tuple[dict, str, dict]:
                              for s in manifest["segments"]}
     doc["session"] = {"takes": 0, "retakes": 0, "assemblies": 0,
                       "label": "HumanVoiced Verified Recording Session"}
+    doc["content"] = verdict
+    doc["rights"] = {"commercial_usage": doc.get("commercial_usage", "online_video"),
+                     "voice_cloning": False, "ai_training": False,
+                     "audio_cleanup": True}
     if brief.get("channel_id"):
         doc["channel_id"] = brief["channel_id"]
     if brief.get("channel_preset"):
         doc["channel_preset"] = brief["channel_preset"]
+    requested = list(brief.get("narrator_ids", []))
+    if hold:
+        doc["status"] = "needs_review"
+        doc["pending_narrator_ids"] = requested
+        DB.save_contract(doc)
+        _ev(c.contract_id, "contract.held",
+            {"tier": verdict["tier"], "flags": verdict["flags"]}, ag["agent_id"], "agent")
+        return DB.get_contract(c.contract_id), "", priced
+    from hv import content as _ct
+    kept, excluded = [], []
+    for nid in requested:
+        ndoc = DB.get_narrator(nid) or {}
+        ok, _ = _ct.allowed_for_prefs(verdict["flags"], ndoc.get("prefs", {}))
+        (kept if ok else excluded).append(nid)
+    intent = E.PaymentIntent(contract_id=c.contract_id, amount_minor=int(priced["narrator_payout"] * 100))
+    if not rail.verify_funding(intent):
+        raise HTTPException(402, "funding verification failed")
+    rail.lock(intent)
+    c.funding_status = "secured"
+    doc["funding_status"] = "secured"
     DB.save_contract(doc)
     DB.save_intent(c.contract_id, {"intent_id": intent.intent_id,
                                   "amount_minor": intent.amount_minor,
                                   "idempotency_key": intent.idempotency_key})
-    DB.offer_to(c.contract_id, brief.get("narrator_ids", []))
+    DB.offer_to(c.contract_id, kept)
     _ev(c.contract_id, "contract.created", {"version": 1, "price": priced}, ag["agent_id"], "agent")
     _ev(c.contract_id, "payment.secured", {"intent": intent.intent_id}, "platform")
+    if excluded:
+        _ev(c.contract_id, "offers.filtered",
+            {"excluded": excluded, "flags": verdict["flags"]}, "platform")
     return DB.get_contract(c.contract_id), intent.intent_id, priced
 
 
@@ -770,6 +806,23 @@ def accept_offer(cid: str, body: dict[str, Any], x_hv_session: str | None = Head
     c = DB.accept_atomic(cid, nid, obj.to_dict())
     if not c:
         raise HTTPException(409, "offer unavailable (taken or wrong state)")
+    import json as _j
+    c["talent_acceptance"] = {
+        "accepted_by": nid,
+        "contract_version": c.get("version", 1),
+        "accepted_at": c.get("accepted_at", ""),
+        "script_sha256": c.get("script_sha256", ""),
+        "terms_sha256": sha256(_j.dumps({
+            "payout_usd": c.get("payout_usd"),
+            "deadline_at": c.get("deadline_at"),
+            "commercial_usage": c.get("commercial_usage"),
+            "script_sha256": c.get("script_sha256"),
+            "version": c.get("version", 1)}, sort_keys=True)),
+        "statement": ("I have had access to the complete script and usage terms. "
+                      "I voluntarily accept this recording assignment for the stated "
+                      "compensation. Material changes require my agreement."),
+    }
+    DB.save_contract(c)
     _ev(cid, "offer.accepted", {"narrator": nid}, nid, "narrator")
     _ev(cid, "contract.activated", {"deadline": c["deadline_at"]})
     return {"contract": c}
@@ -912,6 +965,9 @@ def approve(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(
         if case.get("status") in ("open", "decided") and not (
                 (case.get("decision") or {}).get("settlement_authorised")):
             raise HTTPException(409, "dispute open — resolve before settlement")
+    flag = c.get("safety_flag") or {}
+    if flag and not flag.get("cleared"):
+        raise HTTPException(409, "safety report open — human review required")
     sub = c.get("last_submission") or {}
     tech = sub.get("qc_technical") or {}
     if not tech.get("file_valid"):
@@ -1160,6 +1216,9 @@ def build_pack(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Head
         raise HTTPException(403, "only the contracting agent packs")
     if c.get("status") not in ("submitted", "settled"):
         raise HTTPException(409, "pack needs a submitted recording")
+    flag = c.get("safety_flag") or {}
+    if flag and not flag.get("cleared"):
+        raise HTTPException(409, "safety report open — human review required")
     tier = body.get("tier", "basic")
     if tier not in ("basic", "studio", "clean"):
         raise HTTPException(422, "tier must be basic, studio or clean")
@@ -1605,7 +1664,9 @@ def _order_terms(brief: dict, priced: dict, script: str) -> dict:
             "commercial_usage": brief.get("commercial_usage", "online_video"),
             "included_corrections": 1,
             "review_window_seconds": 86400,
-            "voice_cloning_allowed": False}
+            "voice_cloning_allowed": False,
+            "ai_training_allowed": False,
+            "audio_cleanup_allowed": True}
 
 
 @app.post("/v1/orders/draft")
@@ -1699,3 +1760,95 @@ def approve_order(oid: str, body: dict[str, Any],
     return {"order_id": oid, "status": "authorized",
             "contract_id": doc["contract_id"], "funding": funding,
             "price": priced}
+
+
+# ---------- safety: report path + human review gate ----------
+
+REPORT_REASONS = ("unsafe", "unlawful", "misrepresented", "other")
+
+
+@app.post("/v1/contracts/{cid}/report")
+def report(cid: str, body: dict[str, Any], x_hv_session: str | None = Header(None),
+           x_hv_agent_key: str | None = Header(None)):
+    """Either party can flag unsafe, unlawful or misrepresented work.
+    Flagging blocks settlement and packing until a human reviews.
+    Reporting is never penalised; withdrawing post-acceptance otherwise
+    follows the contract terms."""
+    nid, aid = _caller_ids(x_hv_session, x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c:
+        raise HTTPException(404, "unknown contract")
+    if not ((nid and nid == c.get("narrator_id")) or (aid and aid == c.get("agent_id"))):
+        raise HTTPException(403, "only contract parties report")
+    reason = body.get("reason", "")
+    if reason not in REPORT_REASONS:
+        raise HTTPException(422, f"reason must be one of {REPORT_REASONS}")
+    c["safety_flag"] = {"reason": reason,
+                        "detail": (body.get("detail") or "")[:500],
+                        "by": nid or aid, "at": utcnow_now(),
+                        "cleared": False}
+    DB.save_contract(c)
+    who, atype = (nid, "narrator") if nid else (aid, "agent")
+    _ev(cid, "safety.reported", {"reason": reason}, who, atype)
+    return {"ok": True, "safety_flag": c["safety_flag"]}
+
+
+@app.post("/v1/admin/review")
+def admin_review(body: dict[str, Any]):
+    """Human platform review: clear a safety flag, or approve/reject a
+    held (restricted-tier) contract. Gated by HV_ADMIN_TOKEN, never default."""
+    admin = os.getenv("HV_ADMIN_TOKEN", "")
+    if not admin or body.get("admin_token") != admin:
+        raise HTTPException(403, "admin only")
+    cid, decision = body.get("contract_id", ""), body.get("decision", "")
+    if decision not in ("approve", "reject", "clear"):
+        raise HTTPException(422, "decision must be approve|reject|clear")
+    c = DB.get_contract(cid)
+    if not c:
+        raise HTTPException(404, "unknown contract")
+    if decision == "clear":
+        if c.get("safety_flag"):
+            c["safety_flag"]["cleared"] = True
+            DB.save_contract(c)
+            _ev(cid, "safety.cleared", {}, "platform")
+        return {"ok": True, "safety_flag": c.get("safety_flag")}
+    if c.get("status") != "needs_review":
+        raise HTTPException(409, "contract is not awaiting review")
+    if decision == "reject":
+        c["status"] = "cancelled"
+        DB.save_contract(c)
+        _ev(cid, "contract.rejected", {"tier": (c.get("content") or {}).get("tier")},
+            "platform")
+        return {"ok": True, "status": "cancelled"}
+    ag = {"agent_id": c.get("agent_id"), "principal_id": c.get("principal_id", ""),
+          "max_job_minor": 10 ** 12, "max_daily_minor": 10 ** 12}
+    today = _dt.date.today().isoformat()
+    if not DB.reserve_spend(ag["agent_id"], today, int(c.get("payout_usd", 0) * 100),
+                            10 ** 12):
+        raise HTTPException(402, "spend reservation failed")
+    if not ALLOW_SIMULATED:
+        raise HTTPException(501, "simulated funding disabled")
+    flags = (c.get("content") or {}).get("flags", [])
+    kept, excluded = [], []
+    for nid in c.get("pending_narrator_ids", []):
+        ndoc = DB.get_narrator(nid) or {}
+        from hv import content as _ct
+        ok, _ = _ct.allowed_for_prefs(flags, ndoc.get("prefs", {}))
+        (kept if ok else excluded).append(nid)
+    intent = E.PaymentIntent(contract_id=cid,
+                             amount_minor=int(c.get("payout_usd", 0) * 100))
+    if not rail.verify_funding(intent):
+        raise HTTPException(402, "funding verification failed")
+    rail.lock(intent)
+    c["funding_status"] = "secured"
+    c["status"] = "offered"
+    DB.save_contract(c)
+    DB.save_intent(cid, {"intent_id": intent.intent_id,
+                         "amount_minor": intent.amount_minor,
+                         "idempotency_key": intent.idempotency_key})
+    DB.offer_to(cid, kept)
+    _ev(cid, "contract.approved", {"tier": (c.get("content") or {}).get("tier"),
+                                   "excluded": excluded}, "platform")
+    _ev(cid, "payment.secured", {"intent": intent.intent_id}, "platform")
+    return {"ok": True, "status": "offered", "funding": intent.intent_id,
+            "excluded": excluded}
