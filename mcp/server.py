@@ -19,6 +19,7 @@ TOOLS = [
     {"name": "hv.pricing.quote", "description": "Fixed P(t) quote from frozen script word count; tier + rarity applied"},
     {"name": "hv.reputation.get", "description": "R_n outcome vector (Q,D,A,S,C) + windows + appeals"},
     {"name": "hv.disputes.get_rules", "description": "Published rule IDs (PAY/SLA/QC/REV/DIS/REP) — agents cite, never invent"},
+    {"name": "hv.casting.search", "description": "Multi-role cast list: roles with sides matched to character profiles"},
 ]
 COMING = ["hv.portfolio.get", "hv.pricing.quote", "hv.contract.get",
           "hv.contract.events", "hv.support.ask"]
@@ -40,6 +41,14 @@ def handle(method: str, params: dict) -> dict:
     if name == "hv.disputes.get_rules":
         from hv import dispute_rules as _dr
         return {"result": _dr.RULES}
+    if name == "hv.casting.search":
+        from hv import casting as _c
+        args = dict(params.get("arguments", {}))
+        roles = [ _c.role(args.get("project", ""), r.get("character", ""),
+                          r.get("side_text", ""), r.get("voice_reqs", {}))
+                  for r in args.get("roles", [])]
+        return {"result": _c.cast_list(args.get("project", ""), roles,
+                                       args.get("catalog", []))}
     if name in COMING:
         return {"error": f"tool {name} tracked, not yet implemented (see TECH-SPEC P0)"}
     return {"error": f"unknown tool {name}"}

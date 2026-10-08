@@ -158,6 +158,30 @@ def logout(x_hv_session: str | None = Header(None)):
 
 # ---------- narrators / voices ----------
 
+@app.post("/v1/casting/search")
+def casting_search(body: dict[str, Any]):
+    from hv import casting as _c
+    roles = [_c.role(body.get("project", ""), r.get("character", ""),
+                     r.get("side_text", ""), r.get("voice_reqs", {}))
+             for r in body.get("roles", [])]
+    catalog = [{"voice_id": n["id"], "handle": n.get("handle", ""),
+                "characters": n.get("characters", [])}
+               for n in DB.list_narrators()]
+    return {"cast": _c.cast_list(body.get("project", ""), roles, catalog)}
+
+
+@app.post("/v1/contracts/{cid}/stage-direction")
+def stage_direction(cid: str, body: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
+    from hv import casting as _c
+    ag = _agent(x_hv_agent_key)
+    c = DB.get_contract(cid)
+    if not c or c.get("agent_id") != ag["agent_id"]:
+        raise HTTPException(403, "only the contracting agent directs")
+    sd = _c.stage_direction(cid, body.get("notes", ""), body.get("scenes"))
+    _ev(cid, "direction.attached", {"sha256": sd["sha256"]}, ag["agent_id"], "agent")
+    return sd
+
+
 @app.post("/v1/narrators/me/payout-prefs")
 def payout_prefs(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import stablecoin as _sc
