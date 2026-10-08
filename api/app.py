@@ -158,6 +158,24 @@ def logout(x_hv_session: str | None = Header(None)):
 
 # ---------- narrators / voices ----------
 
+@app.post("/v1/narrators/me/payout-prefs")
+def payout_prefs(body: dict[str, Any], x_hv_session: str | None = Header(None)):
+    from hv import stablecoin as _sc
+    nid = _narrator(x_hv_session)
+    doc = DB.get_narrator(nid) or {"id": nid}
+    try:
+        pref = _sc.set_prefs(doc, body.get("mode", "later"),
+                             body.get("wallet", ""), body.get("currency", ""))
+    except AssertionError as e:
+        raise HTTPException(422, str(e))
+    DB.save_narrator(doc)
+    return {"payout_pref": pref}
+
+
+@app.get("/v1/transparency")
+def transparency():
+    from hv import stablecoin as _sc
+    return _sc.Transparency().public()
 @app.post("/v1/narrators/me/profile")
 def my_profile(body: dict[str, Any], x_hv_session: str | None = Header(None)):
     from hv import profile_draft as _pd
