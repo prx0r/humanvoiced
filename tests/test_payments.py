@@ -23,12 +23,14 @@ def test_capability_honesty():
     svc = S.PaymentService(None)
     for ad in (st, x, A.StripeConnect(), A.Simulated()):
         svc.register(ad)
-    try:
-        svc.fund({}, "x402_base_usdc")
-        assert False
-    except ValueError:
-        pass
-    assert svc.fund({"contract_id": "hvc_1", "payout_usd": 10}, "simulated")["rail"] == "simulated"
+    for name in ("x402_base_usdc", "simulated"):
+        try:
+            svc.fund({}, name)
+            assert False, name
+        except (ValueError, KeyError):
+            pass
+    ok = svc.fund({"contract_id": "hvc_1", "payout_usd": 10}, "stellar_usdc_trustless_work_v1")
+    assert ok["state"] == "testnet_intent"
 
 
 def test_demand_templates_match_agents():
