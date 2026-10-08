@@ -677,13 +677,6 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
         manifest = _br.compile(brief.get("brief") or {"mode": "script"}, script)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    review = None
-    if brief.get("script_review") == "suggest_only":
-        from hv import noslop as _ns
-        try:
-            review = _ns.preflight(script)
-        except _ns.NoslopUnavailable as e:
-            raise HTTPException(501, str(e))
     if not ALLOW_SIMULATED:
         raise HTTPException(501, "simulated funding disabled — set HV_ALLOW_SIMULATED=1 only in dev/test; "
                                  "production requires a real protected-funding rail")
@@ -700,10 +693,6 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
                              for s in manifest["segments"]}
     doc["session"] = {"takes": 0, "retakes": 0, "assemblies": 0,
                       "label": "HumanVoiced Verified Recording Session"}
-    if review is not None:
-        # Advisory writing notes, stored pre-acceptance. Never a funding
-        # gate (funding proceeds below), never a rewrite, no AI verdict.
-        doc["script_review"] = review
     DB.save_contract(doc)
     DB.save_intent(c.contract_id, {"intent_id": intent.intent_id,
                                   "amount_minor": intent.amount_minor,
@@ -711,9 +700,6 @@ def create(brief: dict[str, Any], x_hv_agent_key: str | None = Header(None)):
     DB.offer_to(c.contract_id, brief.get("narrator_ids", []))
     _ev(c.contract_id, "contract.created", {"version": 1, "price": priced}, ag["agent_id"], "agent")
     _ev(c.contract_id, "payment.secured", {"intent": intent.intent_id}, "platform")
-    if review is not None:
-        _ev(c.contract_id, "script.reviewed",
-            {"patterns": review.get("pattern_count", 0)}, ag["agent_id"], "agent")
     return {"contract": DB.get_contract(c.contract_id), "funding": intent.intent_id,
             "price": priced}
 
