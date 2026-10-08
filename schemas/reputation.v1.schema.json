@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://humanvoiced/reputation.v1",
+  "title": "HumanVoiced reputation outcome vector",
+  "type": "object",
+  "required": ["narrator_id", "window_days", "completed", "vector"],
+  "properties": {
+    "narrator_id": {"type": "string"},
+    "window_days": {"enum": [90, 365]},
+    "completed": {"type": "integer", "minimum": 0},
+    "history_label": {"enum": ["new_voice", "insufficient_history", "established"]},
+    "vector": {
+      "type": "object",
+      "required": ["Q", "D", "A", "S", "C"],
+      "properties": {
+        "Q": {"type": ["number", "null"], "description": "technical + script quality 0-1"},
+        "D": {"type": ["number", "null"], "description": "deadline reliability 0-1"},
+        "A": {"type": ["number", "null"], "description": "acceptance reliability while available 0-1"},
+        "S": {"type": ["number", "null"], "description": "suitability for queried job 0-1"},
+        "C": {"type": ["number", "null"], "description": "creator satisfaction 0-1"}
+      }
+    },
+    "verified_incidents": {"type": "integer", "minimum": 0},
+    "appeals_won": {"type": "integer", "minimum": 0},
+    "computed_at": {"type": "string", "format": "date-time"},
+    "model_version": {"type": "string"}
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://humanvoiced/evaluation.v1",
+  "title": "HumanVoiced machine-readable evaluation report",
+  "type": "object",
+  "required": ["submission_id", "contract_id", "evaluation_version", "technical",
+    "script_alignment", "style", "recommendation", "requires_human_review",
+    "model_versions", "policy_version"],
+  "properties": {
+    "submission_id": {"type": "string"},
+    "contract_id": {"type": "string"},
+    "evaluation_version": {"type": "string"},
+    "technical": {
+      "type": "object",
+      "required": ["file_valid", "clipping_detected", "noise_threshold_passed"],
+      "properties": {
+        "file_valid": {"type": "boolean"},
+        "clipping_detected": {"type": "boolean"},
+        "noise_threshold_passed": {"type": "boolean"},
+        "silence_ratio": {"type": "number"}
+      }
+    },
+    "script_alignment": {
+      "type": "object",
+      "required": ["coverage_estimate", "potential_missing_segments"],
+      "properties": {
+        "coverage_estimate": {"type": "number", "minimum": 0, "maximum": 1},
+        "potential_missing_segments": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "style": {
+      "type": "object",
+      "required": ["requested", "finding", "confidence"],
+      "properties": {
+        "requested": {"type": "string"},
+        "finding": {"enum": ["likely_match", "uncertain", "likely_mismatch"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "consistency_advisory": {
+      "type": "object",
+      "properties": {
+        "similarity": {"type": "number"},
+        "note": {"type": "string", "const": "advisory only — never sole payment blocker"}
+      }
+    },
+    "recommendation": {"enum": ["approve", "correct", "human_review", "reject"]},
+    "requires_human_review": {"type": "boolean"},
+    "model_versions": {"type": "object"},
+    "policy_version": {"type": "string"},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}}
+  }
+}

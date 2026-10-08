@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://humanvoiced/contract.v1",
+  "title": "HumanVoiced immutable contract",
+  "type": "object",
+  "required": ["contract_id", "version", "principal_id", "agent_id", "narrator_id",
+    "script_sha256", "brief_sha256", "terms_version", "payout_usd", "funding_status",
+    "delivery_seconds", "deliverable", "status"],
+  "properties": {
+    "contract_id": {"type": "string", "pattern": "^hvc_[0-9]+$"},
+    "version": {"type": "integer", "minimum": 1},
+    "principal_id": {"type": "string"},
+    "agent_id": {"type": "string"},
+    "narrator_id": {"type": "string"},
+    "script_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "brief_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "terms_version": {"type": "string"},
+    "payout_usd": {"type": "number", "exclusiveMinimum": 0},
+    "funding_status": {"enum": ["pending", "secured", "released", "refunded"]},
+    "delivery_seconds": {"type": "integer", "minimum": 60},
+    "accepted_at": {"type": "string", "format": "date-time"},
+    "deadline_at": {"type": "string", "format": "date-time"},
+    "deliverable": {
+      "type": "object",
+      "required": ["format", "sample_rate", "channels"],
+      "properties": {
+        "format": {"enum": ["wav"]},
+        "sample_rate": {"enum": [44100, 48000]},
+        "channels": {"enum": [1, 2]}
+      }
+    },
+    "included_corrections": {"type": "integer", "minimum": 0},
+    "review_window_seconds": {"type": "integer", "minimum": 0},
+    "commercial_usage": {"type": "string"},
+    "voice_cloning_allowed": {"type": "boolean"},
+    "status": {"enum": ["proposed", "offered", "accepted", "submitted", "in_correction",
+      "delivered", "disputed", "settled", "cancelled", "reassigned"]}
+  }
+}
